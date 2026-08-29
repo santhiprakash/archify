@@ -28,7 +28,6 @@ const EDGE_PATTERNS = [
   { re: /^-\.\.->/, variant: 'dashed' },
   { re: /^-\.->/, variant: 'dashed' },
   { re: /^-->/, variant: 'solid' },
-  { re: /^---/, variant: 'dashed' },
 ];
 
 const UNSUPPORTED_KEYWORDS = new Set([
@@ -120,6 +119,21 @@ export function parseFlowchart(source) {
       return { ok: false, diagnostics };
     }
 
+    // The "direction" directive is only meaningful with per-region layout,
+    // which the importer does not provide; accepting it would invent nodes.
+    const dirDirective = line.match(/^direction\s+(TB|TD|BT|LR|RL)\b/i);
+    if (dirDirective) {
+      diagnostics.push(diag(
+        'import/unsupported-direction-directive',
+        'Mermaid "direction" is not supported by the Archify flowchart importer; the diagram-level direction applies to all regions.',
+        lineNo, 1,
+        {
+          supportedFixes: ['remove the "direction" line; declare the direction once on the first line, e.g. "flowchart TB"'],
+        },
+      ));
+      return { ok: false, diagnostics };
+    }
+
     // Subgraph start.
     const subgraphMatch = line.match(/^subgraph\s+(.+)$/i);
     if (subgraphMatch) {
@@ -156,10 +170,28 @@ export function parseFlowchart(source) {
       return { ok: false, diagnostics };
     }
 
-    // Register components.
+    // Register components. A later explicit declaration refines an earlier
+    // implicit one (Mermaid uses the latest text); two conflicting explicit
+    // declarations are diagnosed instead of silently picking a winner.
     for (const comp of stmtResult.components) {
-      if (!components.has(comp.id)) {
+      const existing = components.get(comp.id);
+      if (!existing) {
         components.set(comp.id, comp);
+      } else if (comp.explicit && !existing.explicit) {
+        existing.label = comp.label;
+        existing.type = comp.type;
+        existing.explicit = true;
+      } else if (comp.explicit && existing.explicit
+        && (comp.label !== existing.label || comp.type !== existing.type)) {
+        diagnostics.push(diag(
+          'import/flowchart-conflicting-node-declaration',
+          `Node "${comp.id}" is declared twice with different explicit definitions ("${existing.label}" and "${comp.label}").`,
+          lineNo, 1,
+          {
+            supportedFixes: [`keep a single explicit declaration for node "${comp.id}" with the text it should have`],
+          },
+        ));
+        return { ok: false, diagnostics };
       }
       // Track subgraph membership.
       if (subgraphStack.length > 0) {
@@ -246,6 +278,7 @@ export function parseFlowchart(source) {
 
   // Auto-layout: assign positions using a layered BFS from source nodes.
   const isHorizontal = direction === 'LR' || direction === 'RL';
+  const mirrored = direction === 'RL' || direction === 'BT';
   const positions = computeLayout(componentArray, connections, direction);
 
   const ir = {
@@ -272,11 +305,14 @@ export function parseFlowchart(source) {
       };
       if (c.label) {
         conn.label = c.label;
-        // Push labels to the edge midpoint to avoid overlapping source components.
-        if (isHorizontal) {
-          conn.labelDx = LAYOUT.GAP_X / 2;
-        } else {
-          conn.labelDy = LAYOUT.GAP_Y / 2 + 10;
+        // The Viewer anchors straight-route labels at the source port's y
+        // minus 10, so a vertical label shifts half a cell toward the target
+        // side of the gap to reach the route midpoint (mirrored for BT).
+        // Horizontal routes already anchor on the mid row; offsetting them
+        // toward the target made labels overlap the target component in
+        // layout validation.
+        if (!isHorizontal) {
+          conn.labelDy = mirrored ? -(LAYOUT.GAP_Y / 2 + 10) : LAYOUT.GAP_Y / 2 + 10;
         }
       }
       if (c.variant && c.variant !== 'solid') conn.variant = c.variant;
@@ -353,6 +389,22 @@ function parseStatement(line, lineNo) {
         lastNode = target.node.id;
         continue;
       }
+
+      // Mermaid's open link "---" (and long-arrow forms like "--->") must not
+      // be silently remapped: Archify connections always carry an arrowhead.
+      if (/^---/.test(line.slice(pos))) {
+        return {
+          ok: false,
+          diagnostics: [diag(
+            'import/unsupported-edge-syntax',
+            'Mermaid open link "---" (and long-arrow forms like "--->") is not supported: Archify connections always carry an arrowhead, so this edge cannot be imported without changing its meaning.',
+            lineNo, pos + 1,
+            {
+              supportedFixes: ['use "-->" for a directed edge, "-.->" for a dotted edge, or "==>" for an emphasized edge'],
+            },
+          )],
+        };
+      }
     }
 
     // Parse a node.
@@ -390,6 +442,7 @@ function parseNode(line, pos, lineNo) {
   // Check for a shape/label definition.
   let label = id;
   let type = 'backend';
+  let explicit = false;
 
   for (const shape of NODE_SHAPES) {
     if (line.slice(pos).startsWith(shape.open)) {
@@ -424,7 +477,10 @@ function parseNode(line, pos, lineNo) {
           };
         }
         const text = line.slice(contentStart + 1, quoteEnd).trim();
-        if (text) label = text;
+        if (text) {
+          label = text;
+          explicit = true;
+        }
         type = shape.type;
         pos = afterQuote + shape.close.length;
       } else {
@@ -441,7 +497,10 @@ function parseNode(line, pos, lineNo) {
           };
         }
         const text = line.slice(contentStart, closeIdx).trim();
-        if (text) label = text;
+        if (text) {
+          label = text;
+          explicit = true;
+        }
         type = shape.type;
         pos = closeIdx + shape.close.length;
       }
@@ -451,7 +510,7 @@ function parseNode(line, pos, lineNo) {
 
   return {
     ok: true,
-    node: { id, type, label },
+    node: { id, type, label, explicit },
     nextPos: pos,
   };
 }
@@ -526,21 +585,24 @@ function computeLayout(components, connections, direction) {
   }
 
   const maxDepth = Math.max(...depth.values());
+  // RL/BT mirror the depth axis so the declared direction is preserved.
+  const mirrorDepth = direction === 'RL' || direction === 'BT';
   const positions = new Map();
 
   for (const [d, layerIds] of layers) {
     const layerSize = layerIds.length;
+    const dCoord = mirrorDepth ? maxDepth - d : d;
     for (let i = 0; i < layerSize; i++) {
       const id = layerIds[i];
       if (isHorizontal) {
         // LR/RL: depth = column, index within layer = row.
-        const x = ORIGIN_X + d * (CELL_W + GAP_X);
+        const x = ORIGIN_X + dCoord * (CELL_W + GAP_X);
         const y = ORIGIN_Y + i * (CELL_H + GAP_Y);
         positions.set(id, { pos: [x, y], size: [CELL_W, CELL_H] });
       } else {
         // TD/BT: depth = row, index within layer = column.
         const x = ORIGIN_X + i * (CELL_W + GAP_X);
-        const y = ORIGIN_Y + d * (CELL_H + GAP_Y);
+        const y = ORIGIN_Y + dCoord * (CELL_H + GAP_Y);
         positions.set(id, { pos: [x, y], size: [CELL_W, CELL_H] });
       }
     }

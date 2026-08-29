@@ -75,6 +75,48 @@ test('valid chained edges create multiple connections from one line', () => {
   assert.equal(result.ir.connections[2].to, 'D');
 });
 
+test('a later explicit node declaration updates the earlier implicit one', () => {
+  const result = parseFlowchart(readFixture('valid-redeclared-labels.mmd'));
+  assert.ok(result.ok, `Expected ok, got diagnostics: ${JSON.stringify(result.diagnostics)}`);
+  assert.equal(result.ir.components.length, 2);
+  const a = result.ir.components.find((c) => c.id === 'A');
+  const b = result.ir.components.find((c) => c.id === 'B');
+  assert.equal(a.label, 'Named source');
+  assert.equal(b.label, 'Named target');
+});
+
+test('RL direction places sources to the right of their targets', () => {
+  const result = parseFlowchart(readFixture('valid-direction-rl.mmd'));
+  assert.ok(result.ok, `Expected ok, got diagnostics: ${JSON.stringify(result.diagnostics)}`);
+  const a = result.ir.components.find((c) => c.id === 'A');
+  const b = result.ir.components.find((c) => c.id === 'B');
+  assert.ok(a.pos[0] > b.pos[0], `RL: source x=${a.pos[0]} must exceed target x=${b.pos[0]}`);
+});
+
+test('BT direction places sources below their targets', () => {
+  const result = parseFlowchart(readFixture('valid-direction-bt.mmd'));
+  assert.ok(result.ok, `Expected ok, got diagnostics: ${JSON.stringify(result.diagnostics)}`);
+  const a = result.ir.components.find((c) => c.id === 'A');
+  const b = result.ir.components.find((c) => c.id === 'B');
+  assert.ok(a.pos[1] > b.pos[1], `BT: source y=${a.pos[1]} must exceed target y=${b.pos[1]}`);
+  const labeled = result.ir.connections.find((c) => c.label === 'retry');
+  assert.ok(labeled, 'Expected the labeled B→C connection');
+  assert.ok(labeled.labelDy < 0, 'BT labels shift upward toward the route midpoint');
+});
+
+test('LR and TD layouts keep their original orientation', () => {
+  const lr = parseFlowchart('flowchart LR\n  A[Source] --> B[Target]');
+  assert.ok(lr.ok);
+  const aLr = lr.ir.components.find((c) => c.id === 'A');
+  const bLr = lr.ir.components.find((c) => c.id === 'B');
+  assert.ok(aLr.pos[0] < bLr.pos[0], 'LR: source must sit left of target');
+  const td = parseFlowchart('flowchart TD\n  A[Source] --> B[Target]');
+  assert.ok(td.ok);
+  const aTd = td.ir.components.find((c) => c.id === 'A');
+  const bTd = td.ir.components.find((c) => c.id === 'B');
+  assert.ok(aTd.pos[1] < bTd.pos[1], 'TD: source must sit above target');
+});
+
 test('all component types are valid Archify componentType values', () => {
   const result = parseFlowchart(readFixture('valid-subgraph.mmd'));
   assert.ok(result.ok);
@@ -119,6 +161,12 @@ test('unbalanced end exits non-zero with a stable diagnostic', () => {
   assert.ok(result.diagnostics.some((d) => d.code === 'import/flowchart-unbalanced-end'));
 });
 
+test('conflicting explicit redeclarations exit non-zero instead of silently picking one', () => {
+  const result = parseFlowchart(readFixture('malformed-conflicting-redeclaration.mmd'));
+  assert.ok(!result.ok);
+  assert.ok(result.diagnostics.some((d) => d.code === 'import/flowchart-conflicting-node-declaration'));
+});
+
 // --- Unsupported sources --------------------------------------------------
 
 test('classDef directive exits non-zero with a stable named diagnostic', () => {
@@ -131,6 +179,52 @@ test('style directive exits non-zero with a stable named diagnostic', () => {
   const result = parseFlowchart(readFixture('unsupported-style.mmd'));
   assert.ok(!result.ok);
   assert.ok(result.diagnostics.some((d) => d.code === 'import/unsupported-keyword-style'));
+});
+
+test('open link "---" exits non-zero instead of becoming a dashed edge', () => {
+  const result = parseFlowchart(readFixture('unsupported-open-link.mmd'));
+  assert.ok(!result.ok, 'Expected the open link "---" to be rejected');
+  assert.ok(result.diagnostics.some((d) => d.code === 'import/unsupported-edge-syntax'));
+});
+
+test('subgraph "direction" directive exits non-zero instead of inventing components', () => {
+  const result = parseFlowchart(readFixture('unsupported-subgraph-direction.mmd'));
+  assert.ok(!result.ok, 'Expected the subgraph direction directive to be rejected');
+  assert.ok(result.diagnostics.some((d) => d.code === 'import/unsupported-direction-directive'));
+});
+
+test('CLI import command exits non-zero for the open link with a stable diagnostic', () => {
+  const cli = path.join(skillRoot, 'bin', 'archify.mjs');
+  const fixture = path.join(fixturesDir, 'unsupported-open-link.mmd');
+  const result = spawnSync(process.execPath, [cli, 'import', 'flowchart', fixture, '--json'], {
+    encoding: 'utf8',
+    stdio: 'pipe',
+  });
+  assert.notEqual(result.status, 0, 'Expected non-zero exit for the open link "---"');
+  const receipt = JSON.parse(result.stdout.trim());
+  assert.equal(receipt.ok, false);
+  assert.ok(receipt.diagnostics.some((d) => d.code === 'import/unsupported-edge-syntax'));
+});
+
+test('every imported valid fixture passes showcase layout validation', () => {
+  const cli = path.join(skillRoot, 'bin', 'archify.mjs');
+  const fixtures = fs.readdirSync(fixturesDir).filter((f) => f.startsWith('valid-') && f.endsWith('.mmd'));
+  assert.ok(fixtures.length >= 8, `Expected the full valid fixture set, found: ${fixtures.join(', ')}`);
+  for (const name of fixtures) {
+    const fixture = path.join(fixturesDir, name);
+    const tmpOut = path.join(os.tmpdir(), `archify-import-${name.replace(/\.mmd$/, '')}-${Date.now()}.json`);
+    const imported = spawnSync(process.execPath, [cli, 'import', 'flowchart', fixture, tmpOut, '--json'], {
+      encoding: 'utf8',
+      stdio: 'pipe',
+    });
+    assert.equal(imported.status, 0, `${name}: import failed: ${imported.stderr}`);
+    const validated = spawnSync(process.execPath, [cli, 'validate', 'architecture', tmpOut, '--quality', 'showcase', '--json'], {
+      encoding: 'utf8',
+      stdio: 'pipe',
+    });
+    assert.equal(validated.status, 0, `${name}: showcase validation failed: ${validated.stdout}`);
+    fs.unlinkSync(tmpOut);
+  }
 });
 
 // --- Adversarial sources -------------------------------------------------
