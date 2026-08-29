@@ -193,11 +193,14 @@ export function parseFlowchart(source) {
         ));
         return { ok: false, diagnostics };
       }
-      // Track subgraph membership.
-      if (subgraphStack.length > 0) {
-        const current = subgraphStack[subgraphStack.length - 1];
-        if (!current.boundary.wraps.includes(comp.id)) {
-          current.boundary.wraps.push(comp.id);
+      // Track subgraph membership. Mermaid nodes belong to every enclosing
+      // subgraph, so a node inside nested subgraphs is recorded in the wraps
+      // list of each ancestor boundary; recording only the innermost region
+      // would emit outer boundaries with empty wraps, which the architecture
+      // schema rejects (boundaries[].wraps minItems: 1).
+      for (const enclosing of subgraphStack) {
+        if (!enclosing.boundary.wraps.includes(comp.id)) {
+          enclosing.boundary.wraps.push(comp.id);
         }
       }
     }
@@ -333,6 +336,37 @@ export function parseFlowchart(source) {
 
 // --- Statement parser ---------------------------------------------------
 
+// Merge a component occurrence into a statement's local component list with
+// the same precedence rules the cross-statement merge applies: a later
+// explicit declaration refines an earlier implicit one, and two conflicting
+// explicit declarations are a conflict diagnostic instead of a silent
+// first-occurrence win. Returns the conflict diagnostic, if any.
+function mergeStatementComponent(components, comp, lineNo) {
+  const existing = components.find((c) => c.id === comp.id);
+  if (!existing) {
+    components.push(comp);
+    return null;
+  }
+  if (comp.explicit && !existing.explicit) {
+    existing.label = comp.label;
+    existing.type = comp.type;
+    existing.explicit = true;
+    return null;
+  }
+  if (comp.explicit && existing.explicit
+    && (comp.label !== existing.label || comp.type !== existing.type)) {
+    return diag(
+      'import/flowchart-conflicting-node-declaration',
+      `Node "${comp.id}" is declared twice with different explicit definitions ("${existing.label}" and "${comp.label}").`,
+      lineNo, 1,
+      {
+        supportedFixes: [`keep a single explicit declaration for node "${comp.id}" with the text it should have`],
+      },
+    );
+  }
+  return null;
+}
+
 function parseStatement(line, lineNo) {
   const components = [];
   const connections = [];
@@ -376,9 +410,8 @@ function parseStatement(line, lineNo) {
         if (!target.ok) return target;
         pos = target.nextPos;
 
-        if (!components.some((c) => c.id === target.node.id)) {
-          components.push(target.node);
-        }
+        const targetConflict = mergeStatementComponent(components, target.node, lineNo);
+        if (targetConflict) return { ok: false, diagnostics: [targetConflict] };
 
         connections.push({
           from: lastNode,
@@ -390,14 +423,17 @@ function parseStatement(line, lineNo) {
         continue;
       }
 
-      // Mermaid's open link "---" (and long-arrow forms like "--->") must not
-      // be silently remapped: Archify connections always carry an arrowhead.
-      if (/^---/.test(line.slice(pos))) {
+      // Mermaid's open links — solid "---" (and long-arrow forms like "--->")
+      // and dotted "-.-" (and longer dotted forms like "-..-") — carry no
+      // arrowhead, so remapping them to a directed connection would silently
+      // change their meaning.
+      const openLink = line.slice(pos).match(/^(---+|-\.(?:\.)*-)/);
+      if (openLink) {
         return {
           ok: false,
           diagnostics: [diag(
             'import/unsupported-edge-syntax',
-            'Mermaid open link "---" (and long-arrow forms like "--->") is not supported: Archify connections always carry an arrowhead, so this edge cannot be imported without changing its meaning.',
+            `Mermaid open link "${openLink[1]}" carries no arrowhead and is not supported: Archify connections always carry an arrowhead, so this edge cannot be imported without changing its meaning.`,
             lineNo, pos + 1,
             {
               supportedFixes: ['use "-->" for a directed edge, "-.->" for a dotted edge, or "==>" for an emphasized edge'],
@@ -412,9 +448,8 @@ function parseStatement(line, lineNo) {
     if (!nodeResult.ok) return nodeResult;
     pos = nodeResult.nextPos;
 
-    if (!components.some((c) => c.id === nodeResult.node.id)) {
-      components.push(nodeResult.node);
-    }
+    const nodeConflict = mergeStatementComponent(components, nodeResult.node, lineNo);
+    if (nodeConflict) return { ok: false, diagnostics: [nodeConflict] };
 
     lastNode = nodeResult.node.id;
   }

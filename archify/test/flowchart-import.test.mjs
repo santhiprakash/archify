@@ -49,6 +49,18 @@ test('valid subgraph flowchart maps subgraphs to boundaries', () => {
   assert.ok(backend.wraps.includes('D'));
 });
 
+test('nested subgraphs record membership in every enclosing region', () => {
+  const result = parseFlowchart(readFixture('valid-nested-subgraphs.mmd'));
+  assert.ok(result.ok, `Expected ok, got diagnostics: ${JSON.stringify(result.diagnostics)}`);
+  assert.equal(result.ir.boundaries.length, 2);
+  const outer = result.ir.boundaries.find((b) => b.label === 'Outer');
+  const inner = result.ir.boundaries.find((b) => b.label === 'Inner');
+  assert.ok(outer, 'Expected an Outer boundary');
+  assert.ok(inner, 'Expected an Inner boundary');
+  assert.ok(outer.wraps.includes('A'), 'Outer must record A so its wraps list is not empty');
+  assert.ok(inner.wraps.includes('A'), 'Inner must record A');
+});
+
 test('valid labeled edges preserve labels in connections', () => {
   const result = parseFlowchart(readFixture('valid-labeled-edges.mmd'));
   assert.ok(result.ok);
@@ -83,6 +95,26 @@ test('a later explicit node declaration updates the earlier implicit one', () =>
   const b = result.ir.components.find((c) => c.id === 'B');
   assert.equal(a.label, 'Named source');
   assert.equal(b.label, 'Named target');
+});
+
+test('a later explicit declaration inside the same statement still wins', () => {
+  const result = parseFlowchart(readFixture('valid-same-statement-redeclare.mmd'));
+  assert.ok(result.ok, `Expected ok, got diagnostics: ${JSON.stringify(result.diagnostics)}`);
+  const b = result.ir.components.find((c) => c.id === 'B');
+  assert.equal(b.label, 'Named bee', 'The later explicit declaration must not be dropped within one statement');
+});
+
+test('an implicit self-reference refined later in the same statement keeps the label', () => {
+  const result = parseFlowchart('flowchart LR\n  A --> A[Label]');
+  assert.ok(result.ok, `Expected ok, got diagnostics: ${JSON.stringify(result.diagnostics)}`);
+  const a = result.ir.components.find((c) => c.id === 'A');
+  assert.equal(a.label, 'Label', 'A --> A[Label] must import the explicit label, not the bare id');
+});
+
+test('conflicting explicit declarations within one statement exit non-zero', () => {
+  const result = parseFlowchart(readFixture('malformed-conflicting-same-statement.mmd'));
+  assert.ok(!result.ok, 'Expected A[One] --> A[Two] to be rejected');
+  assert.ok(result.diagnostics.some((d) => d.code === 'import/flowchart-conflicting-node-declaration'));
 });
 
 test('RL direction places sources to the right of their targets', () => {
@@ -185,6 +217,16 @@ test('open link "---" exits non-zero instead of becoming a dashed edge', () => {
   const result = parseFlowchart(readFixture('unsupported-open-link.mmd'));
   assert.ok(!result.ok, 'Expected the open link "---" to be rejected');
   assert.ok(result.diagnostics.some((d) => d.code === 'import/unsupported-edge-syntax'));
+});
+
+test('dotted open link "-." exits non-zero with the unsupported-edge diagnostic', () => {
+  const result = parseFlowchart(readFixture('unsupported-dotted-open-link.mmd'));
+  assert.ok(!result.ok, 'Expected the dotted open link "-." to be rejected');
+  const diag = result.diagnostics.find((d) => d.code === 'import/unsupported-edge-syntax');
+  assert.ok(diag, `Expected import/unsupported-edge-syntax, got: ${JSON.stringify(result.diagnostics)}`);
+  assert.ok(!result.diagnostics.some((d) => d.code === 'import/flowchart-invalid-node-id'),
+    'The rejection must not surface as an invalid-node-id parse error');
+  assert.ok(diag.message.includes('"-.-"'), 'The diagnostic should name the offending open-link form');
 });
 
 test('subgraph "direction" directive exits non-zero instead of inventing components', () => {

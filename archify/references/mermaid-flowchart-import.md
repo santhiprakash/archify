@@ -64,21 +64,24 @@ text is imported as-is; HTML/markdown inside labels is never interpreted.
 | Mermaid form | Imported connection |
 | --- | --- |
 | `-->` | directed (default variant) |
-| `-.-`, `-.->` | directed, `variant: "dashed"` |
+| `-.->`, `-..->` | directed, `variant: "dashed"` |
 | `==>` | directed, `variant: "emphasis"` |
 | `-- Text -->`, `-. Text .->` | directed with `label: "Text"` |
 | `A -->\|Text\| B` | directed with `label: "Text"` |
 
-Open links (`---`) and long-arrow forms (`--->`) are **not** supported:
-Archify connections always carry an arrowhead, so remapping them would change
-their meaning. They exit non-zero with `import/unsupported-edge-syntax`.
+Open links — solid `---` / `--->` and dotted `-.-` / `-..-` — are **not**
+supported: they carry no arrowhead, and Archify connections always carry an
+arrowhead, so remapping them would change their meaning. They exit non-zero
+with `import/unsupported-edge-syntax`.
 
 ### Subgraphs
 
 `subgraph Label` … `end` becomes an architecture `boundaries` region whose
 `wraps` lists the component ids declared inside it. Nested subgraphs are
-tracked; the diagram-level direction applies to every region. The Mermaid
-`direction` directive inside a subgraph is rejected with
+tracked: a component declared inside nested subgraphs is recorded in the
+`wraps` list of every enclosing region, so no region is emitted empty. The
+diagram-level direction applies to every region. The Mermaid `direction`
+directive inside a subgraph is rejected with
 `import/unsupported-direction-directive` instead of inventing components.
 
 ## Failure contract
