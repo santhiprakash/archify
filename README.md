@@ -21,9 +21,9 @@ Archify is a Node.js rendering and validation system for Cursor, Claude Code, Co
 
 ![License](https://img.shields.io/badge/license-MIT-22c55e?style=flat-square)
 ![Agent Skill](https://img.shields.io/badge/Agent-Skill-7C3AED?style=flat-square)
-![Development Version](https://img.shields.io/badge/version-2.16.0--dev.0-0891b2?style=flat-square)
+![Stable Version](https://img.shields.io/badge/version-2.16.0-0891b2?style=flat-square)
 
-**Current development version:** `v2.16.0-dev.0`. See [Changelog](CHANGELOG.md#unreleased).
+**Current stable version:** `v2.16.0`. See [Changelog](CHANGELOG.md#2160--2026-08-30).
 
 **[Project page](https://tt-a1i.github.io/archify/)** · **[Scenario guide](https://tt-a1i.github.io/archify/guide.html)** · **[Proof Lab](https://tt-a1i.github.io/archify/gallery.html)**
 
@@ -33,7 +33,7 @@ npx skills add tt-a1i/archify -g
 
 Using Cursor? Open the [agent-aware quick start](https://tt-a1i.github.io/archify/start.html?agent=cursor&type=architecture) for exact global and project commands.
 
-Then ask your agent: `Use archify to map this repository's runtime architecture.`
+**No repository is required:** describe the system in any agent chat.
 
 ## ❤️ Sponsors
 
@@ -117,19 +117,18 @@ The [agent switcher](https://tt-a1i.github.io/archify/start.html?agent=cursor&ty
 
 Archify may GET the fixed stable manifest solely to show an optional reminder; it never downloads or installs updates. Successful checks wait about 72 hours (±20%); active use retries failures after 6, then 24 hours. The server sees normal HTTP metadata (IP and time), but receives no version, Agent, project data, prompts, account/device ID, or ETag. You decide whether and when to update. Set `ARCHIFY_UPDATE_CHECK_DISABLED=1` to disable networking and reminder-state writes.
 
-### 2. Ask for one bounded view
+### 2. Start from a description — no repository required
+
+```text
+Use Archify to draw: Browser -> API -> Redis cache -> PostgreSQL fallback.
+```
+
+For source evidence, open a repository and ask:
 
 ```text
 Analyze this repository, then use archify to create a high-level runtime architecture diagram.
 Show 8–12 core components, one primary path, external dependencies, and trust boundaries.
 Put supporting detail in cards instead of adding more edges.
-```
-
-For a focused flow:
-
-```text
-Use archify to draw this login flow: Browser -> Web App -> API -> JWT validation ->
-Redis session lookup -> PostgreSQL fallback. Keep the cache-miss path secondary.
 ```
 
 ### 3. Refine in chat
