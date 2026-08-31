@@ -1930,6 +1930,33 @@ function commandValidate(args) {
   if (exitCode !== 0) process.exitCode = exitCode;
 }
 
+// The import write path must never alias the input: same path, a symlink
+// resolving to the input, or a hard link sharing the input's inode would all
+// replace the user's Mermaid source with the import result.
+function importOutputAliasesInput(inputPath, outputPath) {
+  let inputReal = null;
+  try {
+    inputReal = fs.realpathSync(path.resolve(inputPath));
+  } catch {
+    return false; // unreadable input is reported by the read path
+  }
+  let outputReal = null;
+  try {
+    outputReal = fs.realpathSync(path.resolve(outputPath));
+  } catch {
+    return false; // output does not exist yet — nothing to alias
+  }
+  if (inputReal === outputReal) return true;
+  try {
+    const inputStat = fs.statSync(inputReal);
+    const outputStat = fs.statSync(outputReal);
+    if (inputStat.dev === outputStat.dev && inputStat.ino === outputStat.ino) return true;
+  } catch {
+    // realpathSync succeeded above, so stat on the same paths cannot fail
+  }
+  return false;
+}
+
 async function commandImport(args) {
   const [format, ...rest] = args;
   if (!format) fail('Usage: archify import flowchart <input.mmd> [output.json] [--json]');
@@ -1970,6 +1997,26 @@ async function commandImport(args) {
     process.exit(1);
   }
 
+  if (outputPath && importOutputAliasesInput(inputPath, outputPath)) {
+    const receipt = {
+      schemaVersion: 1,
+      command: 'import',
+      source: 'mermaid-flowchart',
+      ok: false,
+      error: 'Output path aliases the input file.',
+      diagnostics: [diagnostic({
+        code: 'input/output-alias',
+        message: `Output path "${outputPath}" resolves to the input file; writing it would replace the Mermaid source with the import result.`,
+        subject: { input: inputPath, output: outputPath },
+        evidence: { input: path.resolve(inputPath), output: path.resolve(outputPath) },
+        supportedFixes: ['choose a different output path so the Mermaid source is preserved'],
+      })],
+    };
+    if (json) console.log(JSON.stringify(receipt, null, 2));
+    else console.error(formatDiagnostics(receipt.error, receipt.diagnostics));
+    process.exit(1);
+  }
+
   const { importFlowchart } = await import(pathToFileURL(path.join(skillRoot, 'importers', 'flowchart.mjs')).href);
   const result = importFlowchart(source);
 
@@ -1989,7 +2036,30 @@ async function commandImport(args) {
 
   const irJson = JSON.stringify(result.ir, null, 2);
   if (outputPath) {
-    fs.writeFileSync(outputPath, irJson + '\n');
+    try {
+      fs.writeFileSync(outputPath, irJson + '\n');
+    } catch (error) {
+      const receipt = {
+        schemaVersion: 1,
+        command: 'import',
+        source: 'mermaid-flowchart',
+        ok: false,
+        error: `Output could not be written: ${error.message}`,
+        diagnostics: [diagnostic({
+          code: 'output/write',
+          message: `Output could not be written: ${error.message}`,
+          subject: { output: outputPath },
+          evidence: {
+            ...(error.code ? { systemCode: error.code } : {}),
+            reason: error.message,
+          },
+          supportedFixes: ['choose a writable output file path (the output must not be a directory)'],
+        })],
+      };
+      if (json) console.log(JSON.stringify(receipt, null, 2));
+      else console.error(formatDiagnostics(receipt.error, receipt.diagnostics));
+      process.exit(1);
+    }
     if (!json) console.error(`Imported ${result.ir.components.length} components, ${result.ir.connections.length} connections → ${outputPath}`);
   } else if (!json) {
     console.log(irJson);

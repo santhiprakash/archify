@@ -332,6 +332,143 @@ test('CLI import command exits non-zero for unsupported syntax', () => {
   assert.ok(receipt.diagnostics.some((d) => d.code.startsWith('import/unsupported')));
 });
 
+// --- Declaration-line remainder / subgraph endpoints / empty subgraphs ----
+
+test('declaration-line remainder is rejected instead of silently dropping topology', () => {
+  const result = parseFlowchart('flowchart LR; A[Lost] --> B[Lost]\nC[Kept]\n');
+  assert.ok(!result.ok, 'Expected the statement after "flowchart LR;" to be rejected');
+  assert.ok(result.diagnostics.some((d) => d.code === 'import/declaration-remainder'));
+});
+
+test('trailing semicolon on the declaration line is still accepted', () => {
+  const result = parseFlowchart('flowchart TD;\nA[Alpha] --> B[Beta]\n');
+  assert.ok(result.ok, `Expected a bare trailing semicolon to be accepted, got: ${JSON.stringify(result.diagnostics)}`);
+  assert.equal(result.ir.components.length, 2);
+  assert.equal(result.ir.connections.length, 1);
+});
+
+test('edge endpoint that names a subgraph is rejected instead of inventing a component', () => {
+  const result = parseFlowchart('flowchart LR\nsubgraph Group\n  A[Inside]\nend\nB[Outside] --> Group\n');
+  assert.ok(!result.ok, 'Expected an edge into a subgraph to be rejected');
+  assert.ok(result.diagnostics.some((d) => d.code === 'import/edge-references-subgraph'));
+});
+
+test('edge source that names a subgraph is rejected too', () => {
+  const result = parseFlowchart('flowchart LR\nsubgraph Group\n  A[Inside]\nend\nGroup --> B[Outside]\n');
+  assert.ok(!result.ok, 'Expected an edge out of a subgraph to be rejected');
+  assert.ok(result.diagnostics.some((d) => d.code === 'import/edge-references-subgraph'));
+});
+
+test('empty subgraph is rejected before emitting IR that violates the schema', () => {
+  const result = parseFlowchart('flowchart LR\nsubgraph Empty\nend\nA[One] --> B[Two]\n');
+  assert.ok(!result.ok, 'Expected the empty subgraph to be rejected');
+  assert.ok(result.diagnostics.some((d) => d.code === 'import/empty-subgraph'));
+});
+
+test('long labels widen the cell so the import passes the advertised validation handoff', () => {
+  const cli = path.join(skillRoot, 'bin', 'archify.mjs');
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archify-long-label-'));
+  const src = path.join(tmpDir, 'long.mmd');
+  const out = path.join(tmpDir, 'long.json');
+  fs.writeFileSync(src, 'flowchart LR\nA[Customer subscription management service] --> B[Backend]\n');
+  try {
+    const imported = spawnSync(process.execPath, [cli, 'import', 'flowchart', src, out, '--json'], {
+      encoding: 'utf8',
+      stdio: 'pipe',
+    });
+    assert.equal(imported.status, 0, `import failed: ${imported.stderr}`);
+    const ir = JSON.parse(fs.readFileSync(out, 'utf8'));
+    const long = ir.components.find((c) => c.id === 'A');
+    const est = Array.from(long.label).length * 6.6;
+    assert.ok(long.size[0] + 8 >= est, `Expected component width ${long.size[0]} to fit the ~${Math.round(est)}px label`);
+    const validated = spawnSync(process.execPath, [cli, 'validate', 'architecture', out, '--quality', 'showcase', '--json'], {
+      encoding: 'utf8',
+      stdio: 'pipe',
+    });
+    assert.equal(validated.status, 0, `showcase validation failed: ${validated.stdout}`);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+// --- Output-path safety ---------------------------------------------------
+
+test('CLI import rejects an output path that aliases the input and preserves the source', () => {
+  const cli = path.join(skillRoot, 'bin', 'archify.mjs');
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archify-alias-'));
+  const src = path.join(tmpDir, 'diagram.mmd');
+  fs.writeFileSync(src, 'flowchart LR\n  A[Alpha] --> B[Beta]\n');
+  try {
+    const result = spawnSync(process.execPath, [cli, 'import', 'flowchart', src, src, '--json'], {
+      encoding: 'utf8',
+      stdio: 'pipe',
+    });
+    assert.notEqual(result.status, 0, 'Expected non-zero exit for an aliased output path');
+    const receipt = JSON.parse(result.stdout.trim());
+    assert.equal(receipt.ok, false);
+    assert.ok(receipt.diagnostics.some((d) => d.code === 'input/output-alias'));
+    assert.equal(
+      fs.readFileSync(src, 'utf8'),
+      'flowchart LR\n  A[Alpha] --> B[Beta]\n',
+      'The Mermaid source must be preserved when the output aliases the input',
+    );
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('CLI import rejects a hard-linked output alias by inode identity', () => {
+  const cli = path.join(skillRoot, 'bin', 'archify.mjs');
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archify-hardlink-'));
+  const src = path.join(tmpDir, 'diagram.mmd');
+  const linked = path.join(tmpDir, 'out.json');
+  fs.writeFileSync(src, 'flowchart LR\n  A[Alpha] --> B[Beta]\n');
+  fs.linkSync(src, linked);
+  try {
+    const result = spawnSync(process.execPath, [cli, 'import', 'flowchart', src, linked, '--json'], {
+      encoding: 'utf8',
+      stdio: 'pipe',
+    });
+    assert.notEqual(result.status, 0, 'Expected non-zero exit for a hard-linked output alias');
+    const receipt = JSON.parse(result.stdout.trim());
+    assert.ok(receipt.diagnostics.some((d) => d.code === 'input/output-alias'));
+    assert.equal(
+      fs.readFileSync(src, 'utf8'),
+      'flowchart LR\n  A[Alpha] --> B[Beta]\n',
+      'The Mermaid source must survive a hard-linked output alias',
+    );
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('CLI import returns a stable receipt when the output path is a directory', () => {
+  const cli = path.join(skillRoot, 'bin', 'archify.mjs');
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archify-eisdir-'));
+  const src = path.join(tmpDir, 'diagram.mmd');
+  const outDir = path.join(tmpDir, 'out');
+  fs.mkdirSync(outDir);
+  fs.writeFileSync(src, 'flowchart LR\n  A[Alpha] --> B[Beta]\n');
+  try {
+    const jsonResult = spawnSync(process.execPath, [cli, 'import', 'flowchart', src, outDir, '--json'], {
+      encoding: 'utf8',
+      stdio: 'pipe',
+    });
+    assert.notEqual(jsonResult.status, 0);
+    const receipt = JSON.parse(jsonResult.stdout.trim());
+    assert.equal(receipt.ok, false);
+    assert.ok(receipt.diagnostics.some((d) => d.code === 'output/write'));
+    const textResult = spawnSync(process.execPath, [cli, 'import', 'flowchart', src, outDir], {
+      encoding: 'utf8',
+      stdio: 'pipe',
+    });
+    assert.notEqual(textResult.status, 0);
+    assert.ok(!textResult.stderr.includes('    at '), 'Expected a formatted diagnostic, not a raw stack trace');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 // --- Existing behavior unchanged ----------------------------------------
 
 test('importFlowchart receipt has stable schemaVersion and command fields', () => {

@@ -10,6 +10,10 @@
  * diagnostic and source location; no node or edge is silently discarded.
  */
 
+// The label-width measurement must match the architecture validator's
+// (render-architecture.mjs) so imported cells always fit their labels.
+import { textUnits } from '../renderers/shared/utils.mjs';
+
 // --- Types ---------------------------------------------------------------
 
 const NODE_SHAPES = [
@@ -102,6 +106,22 @@ export function parseFlowchart(source) {
       }
       diagramType = decl[1].toLowerCase();
       direction = decl[2].toUpperCase();
+      // A remainder after the direction (Mermaid allows ";" as a statement
+      // separator) would be silently dropped here — the declaration regex only
+      // matches the "flowchart <direction>" prefix. Dropping it silently loses
+      // topology, so reject the line unless only separators/whitespace remain.
+      const remainder = line.slice(decl[0].length).replace(/[;\s]+/g, ' ').trim();
+      if (remainder) {
+        diagnostics.push(diag(
+          'import/declaration-remainder',
+          `The declaration line contains statements after the direction ("${remainder}"); the importer processes one statement per line, so this topology would be dropped.`,
+          lineNo, decl[0].length + 1,
+          {
+            supportedFixes: ['move each statement after "flowchart <direction>" onto its own line'],
+          },
+        ));
+        return { ok: false, diagnostics };
+      }
       continue;
     }
 
@@ -159,7 +179,21 @@ export function parseFlowchart(source) {
         ));
         return { ok: false, diagnostics };
       }
-      subgraphStack.pop();
+      const closing = subgraphStack.pop();
+      // A region that wrapped no nodes cannot be represented: the architecture
+      // schema requires boundaries[].wraps minItems: 1, so emitting it would
+      // produce IR that fails validation while the import reported ok.
+      if (closing.boundary.wraps.length === 0) {
+        diagnostics.push(diag(
+          'import/empty-subgraph',
+          `Subgraph "${closing.boundary.label}" contains no nodes; every region must wrap at least one component.`,
+          lineNo, 1,
+          {
+            supportedFixes: [`declare at least one node inside subgraph "${closing.boundary.label}" or remove the empty subgraph`],
+          },
+        ));
+        return { ok: false, diagnostics };
+      }
       continue;
     }
 
@@ -272,6 +306,29 @@ export function parseFlowchart(source) {
           supportedFixes: [`declare node "${conn.to}" before using it in an edge`],
         },
       ));
+    }
+  }
+
+  // An edge endpoint that names a subgraph would be registered as a new
+  // implicit component above (a fictitious service plus a boundary for the
+  // same name). Mermaid models edges to groups; the architecture subset does
+  // not, so reject the edge instead of inventing the component.
+  const subgraphNames = new Set(boundaries.map((b) => b.label));
+  for (let sgIndex = 1; sgIndex <= subgraphCounter; sgIndex += 1) {
+    subgraphNames.add(`sg${sgIndex}`);
+  }
+  for (const conn of connections) {
+    for (const endpoint of [conn.from, conn.to]) {
+      if (subgraphNames.has(endpoint)) {
+        diagnostics.push(diag(
+          'import/edge-references-subgraph',
+          `Edge endpoint "${endpoint}" is a subgraph; edges between subgraphs are outside the supported subset.`,
+          conn.line ?? 1, 1,
+          {
+            supportedFixes: [`connect the member nodes of subgraph "${endpoint}" directly instead of the subgraph itself`],
+          },
+        ));
+      }
     }
   }
 
@@ -418,6 +475,7 @@ function parseStatement(line, lineNo) {
           to: target.node.id,
           label,
           variant: edge.variant,
+          line: lineNo,
         });
         lastNode = target.node.id;
         continue;
@@ -579,6 +637,13 @@ function computeLayout(components, connections, direction) {
   const isHorizontal = direction === 'LR' || direction === 'RL';
   const { CELL_W, CELL_H, GAP_X, GAP_Y, ORIGIN_X, ORIGIN_Y } = LAYOUT;
 
+  // Label-aware cell sizing: the architecture validator rejects any component
+  // whose measured label (textUnits(label) * 6.6) is wider than the component
+  // plus 8px, so a fixed 140px cell fails the validation handoff for long
+  // labels. Size every cell at least wide enough for its preserved label
+  // (+4px measurement margin), then advance columns/rows by the measured
+  // widths so no two cells overlap.
+
   // Build adjacency and compute in-degree.
   const ids = components.map((c) => c.id);
   const inDegree = new Map(ids.map((id) => [id, 0]));
@@ -623,23 +688,53 @@ function computeLayout(components, connections, direction) {
   // RL/BT mirror the depth axis so the declared direction is preserved.
   const mirrorDepth = direction === 'RL' || direction === 'BT';
   const positions = new Map();
+  const widths = new Map(components.map((c) => [c.id, Math.max(
+    CELL_W,
+    Math.ceil(textUnits(c.label) * 6.6 - 8) + 4,
+  )]));
 
-  for (const [d, layerIds] of layers) {
-    const layerSize = layerIds.length;
-    const dCoord = mirrorDepth ? maxDepth - d : d;
-    for (let i = 0; i < layerSize; i++) {
-      const id = layerIds[i];
-      if (isHorizontal) {
-        // LR/RL: depth = column, index within layer = row.
-        const x = ORIGIN_X + dCoord * (CELL_W + GAP_X);
-        const y = ORIGIN_Y + i * (CELL_H + GAP_Y);
-        positions.set(id, { pos: [x, y], size: [CELL_W, CELL_H] });
-      } else {
-        // TD/BT: depth = row, index within layer = column.
-        const x = ORIGIN_X + i * (CELL_W + GAP_X);
-        const y = ORIGIN_Y + dCoord * (CELL_H + GAP_Y);
-        positions.set(id, { pos: [x, y], size: [CELL_W, CELL_H] });
+  if (isHorizontal) {
+    // LR/RL: depth = column, index within layer = row. Columns advance by the
+    // widest cell in the column so a widened label never overlaps the column
+    // to its right.
+    const columnMax = new Map();
+    for (const [d, layerIds] of layers) {
+      const dCoord = mirrorDepth ? maxDepth - d : d;
+      columnMax.set(dCoord, Math.max(
+        columnMax.get(dCoord) ?? 0,
+        ...layerIds.map((id) => widths.get(id)),
+      ));
+    }
+    const columnX = new Map();
+    let accX = ORIGIN_X;
+    for (let dc = 0; dc <= maxDepth; dc += 1) {
+      columnX.set(dc, accX);
+      accX += (columnMax.get(dc) ?? 0) + GAP_X;
+    }
+    for (const [d, layerIds] of layers) {
+      const dCoord = mirrorDepth ? maxDepth - d : d;
+      for (let i = 0; i < layerIds.length; i++) {
+        positions.set(layerIds[i], {
+          pos: [columnX.get(dCoord), ORIGIN_Y + i * (CELL_H + GAP_Y)],
+          size: [widths.get(layerIds[i]), CELL_H],
+        });
       }
+    }
+    return positions;
+  }
+
+  // TD/BT: depth = row, index within layer = column. Each visual row advances
+  // by the actual cell widths so widened labels never overlap the next cell.
+  for (const [d, layerIds] of layers) {
+    const dCoord = mirrorDepth ? maxDepth - d : d;
+    let rowX = ORIGIN_X;
+    for (let i = 0; i < layerIds.length; i++) {
+      const id = layerIds[i];
+      positions.set(id, {
+        pos: [rowX, ORIGIN_Y + dCoord * (CELL_H + GAP_Y)],
+        size: [widths.get(id), CELL_H],
+      });
+      rowX += widths.get(id) + GAP_X;
     }
   }
 
