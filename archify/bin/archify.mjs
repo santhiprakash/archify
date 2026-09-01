@@ -1932,34 +1932,11 @@ function commandValidate(args) {
   if (exitCode !== 0) process.exitCode = exitCode;
 }
 
-// The import write path must never alias the input: same path, a symlink
-// resolving to the input, or a hard link sharing the input's inode would all
-// replace the user's Mermaid source with the import result.
-function importOutputAliasesInput(inputPath, outputPath) {
-  let inputReal = null;
-  try {
-    inputReal = fs.realpathSync(path.resolve(inputPath));
-  } catch {
-    return false; // unreadable input is reported by the read path
-  }
-  let outputReal = null;
-  try {
-    outputReal = fs.realpathSync(path.resolve(outputPath));
-  } catch {
-    return false; // output does not exist yet — nothing to alias
-  }
-  if (inputReal === outputReal) return true;
-  try {
-    const inputStat = fs.statSync(inputReal);
-    const outputStat = fs.statSync(outputReal);
-    if (inputStat.dev === outputStat.dev && inputStat.ino === outputStat.ino) return true;
-  } catch {
-    // realpathSync succeeded above, so stat on the same paths cannot fail
-  }
-  return false;
-}
-
 async function commandImport(args) {
+  // The output-commit safety runtime is loaded like the rest of the
+  // output-path runtime so an installed skill missing it reports a structured
+  // doctor/diagnostic failure instead of crashing the CLI at startup.
+  const { commitImportOutput, importOutputAliasesInput } = await import('../renderers/shared/output-path.mjs');
   const [format, ...rest] = args;
   if (!format) fail('Usage: archify import flowchart <input.mmd> [output.json] [--json]');
   if (format !== 'flowchart') fail(`Unsupported import format "${format}". Supported: flowchart`);
@@ -2039,7 +2016,29 @@ async function commandImport(args) {
   const irJson = JSON.stringify(result.ir, null, 2);
   if (outputPath) {
     try {
-      fs.writeFileSync(outputPath, irJson + '\n');
+      const commit = commitImportOutput(inputPath, outputPath, irJson + '\n');
+      if (!commit.ok) {
+        // The output began aliasing the input after the preflight (for example
+        // a symlink swapped while the input parsed). Refuse instead of
+        // replacing the Mermaid source with the import result.
+        const receipt = {
+          schemaVersion: 1,
+          command: 'import',
+          source: 'mermaid-flowchart',
+          ok: false,
+          error: 'Output path aliases the input file.',
+          diagnostics: [diagnostic({
+            code: 'input/output-alias',
+            message: `Output path "${outputPath}" resolves to the input file; writing it would replace the Mermaid source with the import result.`,
+            subject: { input: inputPath, output: outputPath },
+            evidence: { input: path.resolve(inputPath), output: path.resolve(outputPath) },
+            supportedFixes: ['choose a different output path so the Mermaid source is preserved'],
+          })],
+        };
+        if (json) console.log(JSON.stringify(receipt, null, 2));
+        else console.error(formatDiagnostics(receipt.error, receipt.diagnostics));
+        process.exit(1);
+      }
     } catch (error) {
       const receipt = {
         schemaVersion: 1,

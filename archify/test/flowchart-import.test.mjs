@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { parseFlowchart, importFlowchart } from '../importers/flowchart.mjs';
+import { commitImportOutput, importOutputAliasesInput } from '../renderers/shared/output-path.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const skillRoot = path.resolve(__dirname, '..');
@@ -467,6 +468,288 @@ test('CLI import returns a stable receipt when the output path is a directory', 
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
+});
+
+// --- Output-commit race safety (source-preservation holds at commit time) -
+
+function runCliImport(args) {
+  const cli = path.join(skillRoot, 'bin', 'archify.mjs');
+  return spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8', stdio: 'pipe' });
+}
+
+function runCliValidate(file) {
+  const cli = path.join(skillRoot, 'bin', 'archify.mjs');
+  return spawnSync(process.execPath, [cli, 'validate', 'architecture', file, '--quality', 'showcase', '--json'], {
+    encoding: 'utf8',
+    stdio: 'pipe',
+  });
+}
+
+test('commitImportOutput refuses an output that resolves to the input at commit time', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archify-commit-alias-'));
+  const src = path.join(tmpDir, 'diagram.mmd');
+  const out = path.join(tmpDir, 'out.json');
+  const source = 'flowchart LR\n  A[Alpha] --> B[Beta]\n';
+  fs.writeFileSync(src, source);
+  fs.symlinkSync(src, out);
+  try {
+    const commit = commitImportOutput(src, out, '{"ir":true}\n');
+    assert.deepEqual(commit, { ok: false, reason: 'input/output-alias' });
+    assert.equal(fs.readFileSync(src, 'utf8'), source, 'The Mermaid source must survive a swapped output symlink');
+    assert.equal(fs.lstatSync(out).isSymbolicLink(), true, 'The refused commit must not touch the symlink');
+    const leftovers = fs.readdirSync(tmpDir).filter((name) => name.startsWith('.archify-import-'));
+    assert.equal(leftovers.length, 0, 'A refused commit must leave no candidate files behind');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('commitImportOutput replaces an output symlink without following it', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archify-commit-symlink-'));
+  const src = path.join(tmpDir, 'diagram.mmd');
+  const target = path.join(tmpDir, 'precious.txt');
+  const out = path.join(tmpDir, 'out.json');
+  fs.writeFileSync(src, 'flowchart LR\n  A[Alpha] --> B[Beta]\n');
+  fs.writeFileSync(target, 'user data that must survive');
+  fs.symlinkSync(target, out);
+  try {
+    const commit = commitImportOutput(src, out, '{"ir":true}\n');
+    assert.deepEqual(commit, { ok: true });
+    assert.equal(fs.lstatSync(out).isSymbolicLink(), false, 'rename(2) must replace the symlink, not write through it');
+    assert.equal(fs.readFileSync(out, 'utf8'), '{"ir":true}\n');
+    assert.equal(
+      fs.readFileSync(target, 'utf8'),
+      'user data that must survive',
+      'The symlink target must keep its original content',
+    );
+    const leftovers = fs.readdirSync(tmpDir).filter((name) => name.startsWith('.archify-import-'));
+    assert.equal(leftovers.length, 0, 'A committed output must leave no candidate files behind');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('commitImportOutput removes the candidate and throws when the output cannot be renamed', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archify-commit-eisdir-'));
+  const src = path.join(tmpDir, 'diagram.mmd');
+  const outDir = path.join(tmpDir, 'out');
+  fs.writeFileSync(src, 'flowchart LR\n  A[Alpha] --> B[Beta]\n');
+  fs.mkdirSync(outDir);
+  try {
+    assert.throws(() => commitImportOutput(src, outDir, '{"ir":true}\n'));
+    const leftovers = fs.readdirSync(tmpDir).filter((name) => name.startsWith('.archify-import-'));
+    assert.equal(leftovers.length, 0, 'A failed commit must clean up its candidate file');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('CLI import through a symlinked output preserves the symlink target (race-safe end to end)', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archify-ioctl-race-'));
+  const src = path.join(tmpDir, 'diagram.mmd');
+  const target = path.join(tmpDir, 'precious.txt');
+  const out = path.join(tmpDir, 'out.json');
+  fs.writeFileSync(src, 'flowchart LR\n  A[Alpha] --> B[Beta]\n');
+  fs.writeFileSync(target, 'user data that must survive');
+  fs.symlinkSync(target, out);
+  try {
+    const result = runCliImport(['import', 'flowchart', src, out]);
+    assert.equal(result.status, 0, `Expected import to succeed: ${result.stderr}`);
+    assert.equal(
+      fs.readFileSync(target, 'utf8'),
+      'user data that must survive',
+      'Writing the output must never follow a symlink out of the source-preservation contract',
+    );
+    const ir = JSON.parse(fs.readFileSync(out, 'utf8'));
+    assert.equal(ir.diagram_type, 'architecture');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('importOutputAliasesInput still detects same-path and hard-link aliases', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archify-alias-detect-'));
+  const src = path.join(tmpDir, 'diagram.mmd');
+  const linked = path.join(tmpDir, 'linked.json');
+  const other = path.join(tmpDir, 'other.json');
+  fs.writeFileSync(src, 'flowchart LR\n  A[Alpha] --> B[Beta]\n');
+  fs.writeFileSync(other, '{}');
+  fs.linkSync(src, linked);
+  try {
+    assert.equal(importOutputAliasesInput(src, src), true);
+    assert.equal(importOutputAliasesInput(src, linked), true);
+    assert.equal(importOutputAliasesInput(src, other), false);
+    assert.equal(importOutputAliasesInput(src, path.join(tmpDir, 'missing.json')), false);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+// --- Authored subgraph identity -------------------------------------------
+
+test('an edge to an authored subgraph id is rejected instead of inventing a component', () => {
+  const result = parseFlowchart([
+    'flowchart TD',
+    '  subgraph G [Group Label]',
+    '    A[Alpha]',
+    '  end',
+    '  B[Beta]',
+    '  B --> G',
+  ].join('\n'));
+  assert.equal(result.ok, false, 'The import must not report ok with an invented component for the subgraph id');
+  assert.ok(result.diagnostics.some((d) => d.code === 'import/edge-references-subgraph'));
+});
+
+test('subgraph boundary labels carry the title alone, not the raw declaration text', () => {
+  const result = parseFlowchart([
+    'flowchart TD',
+    '  subgraph G [Group Label]',
+    '    A[Alpha]',
+    '  end',
+  ].join('\n'));
+  assert.ok(result.ok, `Expected ok, got: ${JSON.stringify(result.diagnostics)}`);
+  assert.equal(result.ir.boundaries.length, 1);
+  assert.equal(result.ir.boundaries[0].label, 'Group Label');
+  assert.equal(result.ir.components.length, 1, 'No component may be invented from the subgraph id or title');
+});
+
+test('quoted subgraph titles parse to the quoted text', () => {
+  const result = parseFlowchart([
+    'flowchart TD',
+    '  subgraph G["Group Label"]',
+    '    A[Alpha]',
+    '  end',
+  ].join('\n'));
+  assert.ok(result.ok, `Expected ok, got: ${JSON.stringify(result.diagnostics)}`);
+  assert.equal(result.ir.boundaries[0].label, 'Group Label');
+});
+
+test('an authored node named sg1 imports as an ordinary component after a subgraph', () => {
+  const result = parseFlowchart([
+    'flowchart TD',
+    '  subgraph Outer [Stuff]',
+    '    A[Alpha]',
+    '  end',
+    '  sg1[Small Node]',
+    '  A --> sg1',
+  ].join('\n'));
+  assert.ok(result.ok, `A Mermaid-unreserved name must not be rejected: ${JSON.stringify(result.diagnostics)}`);
+  const sg = result.ir.components.find((c) => c.id === 'sg1');
+  assert.ok(sg, 'Expected the sg1 component to be imported');
+  assert.equal(sg.label, 'Small Node');
+  assert.ok(result.ir.connections.some((c) => c.from === 'A' && c.to === 'sg1'));
+});
+
+test('an explicitly declared node sharing a subgraph identity keeps the node for its edges', () => {
+  const result = parseFlowchart([
+    'flowchart TD',
+    '  subgraph X [Gate]',
+    '    A[Alpha]',
+    '  end',
+    '  Gate[Real Node]',
+    '  Gate --> B[Beta]',
+  ].join('\n'));
+  assert.ok(result.ok, `Expected the explicit node declaration to win: ${JSON.stringify(result.diagnostics)}`);
+  assert.ok(result.ir.components.some((c) => c.id === 'Gate' && c.label === 'Real Node'));
+  assert.ok(result.ir.connections.some((c) => c.from === 'Gate' && c.to === 'B'));
+});
+
+test('a subgraph with an empty title is rejected', () => {
+  const result = parseFlowchart([
+    'flowchart TD',
+    '  subgraph []',
+    '    A[Alpha]',
+    '  end',
+  ].join('\n'));
+  assert.equal(result.ok, false);
+  assert.ok(result.diagnostics.some((d) => d.code === 'import/subgraph-empty-title'));
+});
+
+test('CLI import rejects the subgraph-edge case end to end and preserves the source', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archify-subgraph-edge-'));
+  const src = path.join(tmpDir, 'diagram.mmd');
+  const out = path.join(tmpDir, 'out.json');
+  const source = [
+    'flowchart TD',
+    '  subgraph G [Group Label]',
+    '    A[Alpha]',
+    '  end',
+    '  B[Beta]',
+    '  B --> G',
+    '',
+  ].join('\n');
+  fs.writeFileSync(src, source);
+  try {
+    const result = runCliImport(['import', 'flowchart', src, out, '--json']);
+    assert.notEqual(result.status, 0, 'The subgraph-edge topology must not import as ok');
+    const receipt = JSON.parse(result.stdout.trim());
+    assert.ok(receipt.diagnostics.some((d) => d.code === 'import/edge-references-subgraph'));
+    assert.equal(fs.existsSync(out), false, 'A rejected import must not write an output file');
+    assert.equal(fs.readFileSync(src, 'utf8'), source, 'The Mermaid source must be preserved');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+// --- Import -> validate handoff (gate-valid geometry) ----------------------
+
+const LONG_LABEL = 'This is an extremely long relationship label that is likely wider than the available route gap';
+
+function importThenValidateShowcase(mmd, expectLabelDy = undefined) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archify-handoff-'));
+  const src = path.join(tmpDir, 'diagram.mmd');
+  const out = path.join(tmpDir, 'out.json');
+  fs.writeFileSync(src, mmd);
+  try {
+    const imported = runCliImport(['import', 'flowchart', src, out]);
+    assert.equal(imported.status, 0, `Expected import to succeed: ${imported.stderr}`);
+    const validated = runCliValidate(out);
+    assert.equal(
+      validated.status,
+      0,
+      `A supported import must pass the advertised validation handoff: ${validated.stdout}`,
+    );
+    if (expectLabelDy !== undefined) {
+      const ir = JSON.parse(fs.readFileSync(out, 'utf8'));
+      const labeled = ir.connections.find((c) => c.label === LONG_LABEL);
+      assert.ok(labeled, 'Expected the long-labeled connection');
+      assert.equal(labeled.labelDy, expectLabelDy);
+    }
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+test('a long horizontal edge label imports to gate-valid geometry (LR)', () => {
+  importThenValidateShowcase(`flowchart LR\n  A[Alpha] -->|${LONG_LABEL}| B[Beta]\n`, 54);
+});
+
+test('a long horizontal edge label imports to gate-valid geometry (RL)', () => {
+  importThenValidateShowcase(`flowchart RL\n  A[Alpha] -->|${LONG_LABEL}| B[Beta]\n`, 54);
+});
+
+test('a long vertical edge label imports to gate-valid geometry (TB)', () => {
+  importThenValidateShowcase(`flowchart TB\n  A[Alpha] -->|${LONG_LABEL}| B[Beta]\n`);
+});
+
+test('a small cycle imports to gate-valid geometry (A-B-C-B)', () => {
+  importThenValidateShowcase([
+    'flowchart LR',
+    '  A[Alpha] --> B[Beta]',
+    '  B --> C[Gamma]',
+    '  C --> B',
+    '',
+  ].join('\n'));
+});
+
+test('a shared-successor diamond imports to gate-valid geometry (A-B-D, A-D)', () => {
+  importThenValidateShowcase([
+    'flowchart LR',
+    '  A[Alpha] --> B[Beta]',
+    '  B --> D[Delta]',
+    '  A --> D',
+    '',
+  ].join('\n'));
 });
 
 // --- Existing behavior unchanged ----------------------------------------

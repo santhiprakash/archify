@@ -158,9 +158,36 @@ export function parseFlowchart(source) {
     const subgraphMatch = line.match(/^subgraph\s+(.+)$/i);
     if (subgraphMatch) {
       subgraphCounter += 1;
-      const label = subgraphMatch[1].trim();
+      // Mermaid subgraph declarations carry an optional authored id plus a
+      // title: "subgraph Title", "subgraph id [Title]", or
+      // 'subgraph id["Title"]'. Parse and store them separately: edges
+      // reference the authored id, while the boundary label must be the human
+      // title alone — keeping the raw "id [Title]" text as the label both
+      // corrupted the emitted topology and hid the authored identity from
+      // edge-endpoint resolution below.
+      const rest = subgraphMatch[1].trim();
+      let authoredId = null;
+      let label = rest;
+      const idBracket = rest.match(/^(?:([^\[\]]+?)\s*)?\[(.*)\]$/);
+      if (idBracket) {
+        authoredId = (idBracket[1] ?? '').trim() || null;
+        label = idBracket[2].trim().replace(/^["']|["']$/g, '');
+      } else if (rest.length >= 2 && rest.startsWith('"') && rest.endsWith('"')) {
+        label = rest.slice(1, -1);
+      }
+      if (!label) {
+        diagnostics.push(diag(
+          'import/subgraph-empty-title',
+          'Subgraph declaration has an empty title; every region needs a non-empty label.',
+          lineNo, 1,
+          {
+            supportedFixes: ['give the subgraph a title, e.g. "subgraph Frontend"'],
+          },
+        ));
+        return { ok: false, diagnostics };
+      }
       const id = `sg${subgraphCounter}`;
-      const boundary = { kind: 'region', label, wraps: [] };
+      const boundary = { kind: 'region', label, wraps: [], authoredId };
       boundaries.push(boundary);
       subgraphStack.push({ id, boundary });
       continue;
@@ -309,17 +336,24 @@ export function parseFlowchart(source) {
     }
   }
 
-  // An edge endpoint that names a subgraph would be registered as a new
-  // implicit component above (a fictitious service plus a boundary for the
-  // same name). Mermaid models edges to groups; the architecture subset does
-  // not, so reject the edge instead of inventing the component.
-  const subgraphNames = new Set(boundaries.map((b) => b.label));
-  for (let sgIndex = 1; sgIndex <= subgraphCounter; sgIndex += 1) {
-    subgraphNames.add(`sg${sgIndex}`);
+  // An edge endpoint that names a subgraph by its authored identity (id or
+  // title) would otherwise be registered as a new implicit component above —
+  // a fictitious service invented from the subgraph's name. Mermaid models
+  // edges to groups; the architecture subset does not, so reject the edge
+  // using only authored identities. The parser's internal synthetic ids
+  // (sgN) never leave the parser and are NOT reserved, so an authored node
+  // legitimately named "sg1" imports as an ordinary component. An endpoint
+  // that is also an explicitly declared node keeps the node: the explicit
+  // declaration is the authored identity there, not an invention.
+  const subgraphIdentities = new Set();
+  for (const boundary of boundaries) {
+    subgraphIdentities.add(boundary.label);
+    if (boundary.authoredId) subgraphIdentities.add(boundary.authoredId);
   }
   for (const conn of connections) {
     for (const endpoint of [conn.from, conn.to]) {
-      if (subgraphNames.has(endpoint)) {
+      const comp = components.get(endpoint);
+      if (subgraphIdentities.has(endpoint) && !(comp && comp.explicit)) {
         diagnostics.push(diag(
           'import/edge-references-subgraph',
           `Edge endpoint "${endpoint}" is a subgraph; edges between subgraphs are outside the supported subset.`,
@@ -373,6 +407,23 @@ export function parseFlowchart(source) {
         // layout validation.
         if (!isHorizontal) {
           conn.labelDy = mirrored ? -(LAYOUT.GAP_Y / 2 + 10) : LAYOUT.GAP_Y / 2 + 10;
+        } else {
+          // A straight horizontal label wider than the gap between its
+          // endpoint cells overlaps both components (label rect spans the
+          // route midpoint). Move it below the route — half a cell plus label
+          // height and margin clears the 60px row — so the import output can
+          // pass the advertised validate handoff instead of failing it.
+          const fromPos = positions.get(c.from);
+          const toPos = positions.get(c.to);
+          if (fromPos && toPos && fromPos.pos[1] === toPos.pos[1]) {
+            const labelWidth = Math.ceil(textUnits(c.label) * 6.6);
+            const gap = toPos.pos[0] > fromPos.pos[0]
+              ? toPos.pos[0] - (fromPos.pos[0] + fromPos.size[0])
+              : fromPos.pos[0] - (toPos.pos[0] + toPos.size[0]);
+            if (labelWidth > gap) {
+              conn.labelDy = LAYOUT.CELL_H / 2 + 14 + 10;
+            }
+          }
         }
       }
       if (c.variant && c.variant !== 'solid') conn.variant = c.variant;
@@ -651,7 +702,13 @@ function computeLayout(components, connections, direction) {
     inDegree.set(conn.to, (inDegree.get(conn.to) || 0) + 1);
   }
 
-  // BFS from source nodes (in-degree 0) to assign depth layers.
+  // BFS from source nodes (in-degree 0) to assign depth layers. First
+  // assignment wins: relaxing an already-layered node via a cycle or back
+  // edge (the previous longest-path relaxation) relocates it to a deeper
+  // column without re-queuing it, which strands unrelated nodes on the same
+  // row between a straight route's endpoints — A --> B; B --> C; C --> B put
+  // C between A and B, and the straight A --> B route then crossed C's cell
+  // (clean-flow/edge-through-node) even though the import reported ok.
   const depth = new Map();
   const queue = ids.filter((id) => (inDegree.get(id) || 0) === 0);
   for (const id of queue) depth.set(id, 0);
@@ -661,12 +718,9 @@ function computeLayout(components, connections, direction) {
     const current = queue[head++];
     const currentDepth = depth.get(current);
     for (const conn of connections) {
-      if (conn.from === current) {
-        const targetDepth = depth.get(conn.to);
-        if (targetDepth === undefined || targetDepth < currentDepth + 1) {
-          depth.set(conn.to, currentDepth + 1);
-          if (!queue.includes(conn.to)) queue.push(conn.to);
-        }
+      if (conn.from === current && !depth.has(conn.to)) {
+        depth.set(conn.to, currentDepth + 1);
+        queue.push(conn.to);
       }
     }
   }
