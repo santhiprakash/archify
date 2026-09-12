@@ -269,6 +269,40 @@ test('architecture: a singly spread near-aligned relationship keeps the bridge w
   assert.notEqual(points[0][0], points.at(-1)[0]);
 });
 
+test('architecture: a doubly spread near-aligned relationship keeps the bridge when its direct axis is blocked', () => {
+  const doc = {
+    schema_version: 1,
+    diagram_type: 'architecture',
+    meta: { title: 'Blocked doubly spread vertical axis' },
+    components: [
+      { id: 'source', type: 'backend', label: 'Source', pos: [300, 80], size: [160, 60] },
+      { id: 'source-peer', type: 'backend', label: 'Source peer', pos: [120, 80], size: [160, 60] },
+      { id: 'target', type: 'database', label: 'Target', pos: [300, 320], size: [160, 60] },
+      { id: 'target-peer', type: 'database', label: 'Target peer', pos: [480, 320], size: [160, 60] },
+      { id: 'obstacle', type: 'external', label: 'X', pos: [362, 200], size: [36, 80] },
+    ],
+    connections: [
+      { id: 'source-target', from: 'source', to: 'target', fromSide: 'bottom', toSide: 'top' },
+      { id: 'source-peer-target', from: 'source-peer', to: 'target', fromSide: 'bottom', toSide: 'top' },
+      { id: 'source-target-peer', from: 'source', to: 'target-peer', fromSide: 'bottom', toSide: 'top' },
+    ],
+  };
+  const forward = render('architecture', doc);
+  const reversed = render('architecture', { ...doc, connections: [...doc.connections].reverse() });
+
+  const points = connectionPoints(forward, 'source-target');
+  assert.ok(points.length > 2, 'expected outside bridge, got a straight route');
+  assert.notEqual(points[0][0], points.at(-1)[0], 'expected bridge to leave the original shared axis');
+
+  for (const connection of doc.connections) {
+    assert.deepEqual(
+      connectionPoints(forward, connection.id),
+      connectionPoints(reversed, connection.id),
+      `${connection.id} moved after input reordering`,
+    );
+  }
+});
+
 test('architecture: single and explicitly positioned relationships keep legacy anchors', () => {
   const doc = fanOutArchitecture([
     { id: 'single', from: 'hub', to: 'middle' },
