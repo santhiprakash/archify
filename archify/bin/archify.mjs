@@ -231,18 +231,24 @@ const COMPOSITION_FIXES = {
   'composition/desktop-readability': ['reduce the viewBox width, shorten node copy, widen affected nodes, or split the diagram so node context remains at least 6px at a 1440px desktop viewport'],
   'composition/micro-segment': ['move the route/channel/via point so every visible segment is at least 8px'],
   'composition/short-interior-segment': ['move the route/channel/via point so every interior turn has at least 16px'],
+  'composition/boundary-membership': [
+    'move the non-member component so its rect no longer sits inside the boundary frame',
+    'add the component id to the boundary wraps list when it is meant to be a member',
+  ],
 };
 
 function checkerDiagnostics(checker) {
   const diagnostics = [];
   for (const issue of checker?.composition?.issues || []) {
     if (issue.severity !== 'error') continue;
-    const { severity, code, relationship, ...evidence } = issue;
+    const { severity, code, relationship, component, frame, ...evidence } = issue;
     diagnostics.push(diagnostic({
       code,
       severity,
       message: `Final artifact failed ${code}.`,
-      subject: relationship ? { relationship } : { check: 'composition' },
+      subject: relationship
+        ? { relationship }
+        : component ? { component, ...(frame ? { frame } : {}) } : { check: 'composition' },
       evidence,
       supportedFixes: COMPOSITION_FIXES[code] || [],
     }));

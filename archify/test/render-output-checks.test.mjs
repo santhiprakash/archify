@@ -573,3 +573,70 @@ test('render output check: finite_svg keeps context-sensitive values attributes 
   assert.equal(check.ok, true);
   assert.deepEqual(check.details, []);
 });
+
+const BOUNDARY_MEMBERSHIP_BODY = `
+    <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="0" data-composition-frame-label="our private network" x="230" y="10" width="210" height="390" rx="12"/>
+    <g id="node-app_a" data-node-id="app_a" data-node-label="App A" data-node-context="our private network"><rect x="260" y="40" width="150" height="60" rx="6" class="c-mask"/></g>
+    <g id="node-third_party" data-node-id="third_party" data-node-label="Third-party API" data-node-context="Architecture component"><rect x="260" y="180" width="150" height="60" rx="6" class="c-mask"/></g>
+    <g id="node-app_b" data-node-id="app_b" data-node-label="App B" data-node-context="our private network"><rect x="260" y="320" width="150" height="60" rx="6" class="c-mask"/></g>
+  `;
+
+test('render output check: showcase fails a non-member fully inside a boundary frame', () => {
+  const { code, result } = checkHtml('boundary-membership-showcase', BOUNDARY_MEMBERSHIP_BODY, 'showcase', '0 0 640 460');
+  assert.notEqual(code, 0);
+  assert.equal(result.composition.status, 'fail');
+  assert.deepEqual(result.composition.summary, { errors: 1, warnings: 0 });
+  assert.equal(result.composition.metrics.boundaryMembershipIssues, 1);
+  const issue = result.composition.issues.find((item) => item.code === 'composition/boundary-membership');
+  assert.equal(issue.severity, 'error');
+  assert.equal(issue.containment, 'full');
+  assert.deepEqual(issue.component, { id: 'third_party', label: 'Third-party API' });
+  assert.deepEqual(issue.frame, { kind: 'region', id: '0', label: 'our private network' });
+  assert.deepEqual(issue.componentRect, { x: 260, y: 180, width: 150, height: 60 });
+  assert.deepEqual(issue.frameRect, { x: 230, y: 10, width: 210, height: 390 });
+});
+
+test('render output check: standard records non-member containment as a warning', () => {
+  const { code, result } = checkHtml('boundary-membership-standard', BOUNDARY_MEMBERSHIP_BODY, 'standard', '0 0 640 460');
+  assert.equal(code, 0);
+  assert.deepEqual(result.composition.summary, { errors: 0, warnings: 1 });
+  const issue = result.composition.issues.find((item) => item.code === 'composition/boundary-membership');
+  assert.equal(issue.severity, 'warning');
+  assert.equal(issue.containment, 'full');
+});
+
+test('render output check: a non-member straddling the frame stays a warning in showcase', () => {
+  const { code, result } = checkHtml('boundary-membership-straddle', `
+    <rect data-graph-role="structural-frame" data-composition-frame-kind="security-group" data-composition-frame-id="1" data-composition-frame-label="private application network" x="616" y="171" width="714" height="316" rx="8"/>
+    <g id="node-audit" data-node-id="audit" data-node-label="Audit Archive" data-node-context="AWS us-east-1 / production"><rect x="1190" y="450" width="126" height="62" rx="6" class="c-mask"/></g>
+  `, 'showcase', '0 0 1400 620');
+  assert.equal(code, 0);
+  assert.deepEqual(result.composition.summary, { errors: 0, warnings: 1 });
+  const issue = result.composition.issues.find((item) => item.code === 'composition/boundary-membership');
+  assert.equal(issue.severity, 'warning');
+  assert.equal(issue.containment, 'partial');
+  assert.equal(issue.component.id, 'audit');
+  assert.equal(issue.frame.label, 'private application network');
+});
+
+test('render output check: members, nested members, and outside nodes pass boundary membership', () => {
+  const { code, result } = checkHtml('boundary-membership-clean', `
+    <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="0" data-composition-frame-label="outer region" x="20" y="20" width="400" height="300" rx="12"/>
+    <rect data-graph-role="structural-frame" data-composition-frame-kind="security-group" data-composition-frame-id="1" data-composition-frame-label="inner group" x="60" y="60" width="200" height="140" rx="8"/>
+    <g id="node-app" data-node-id="app" data-node-label="App" data-node-context="outer region › inner group"><rect x="80" y="80" width="120" height="50" rx="6" class="c-mask"/></g>
+    <g id="node-db" data-node-id="db" data-node-label="DB" data-node-context="outer region"><rect x="290" y="80" width="110" height="50" rx="6" class="c-mask"/></g>
+    <g id="node-ext" data-node-id="ext" data-node-label="External" data-node-context="Architecture component"><rect x="460" y="60" width="120" height="50" rx="6" class="c-mask"/></g>
+  `, 'showcase', '0 0 640 380');
+  assert.equal(code, 0);
+  assert.equal(result.composition.metrics.boundaryMembershipIssues, 0);
+  assert.deepEqual(result.composition.summary, { errors: 0, warnings: 0 });
+});
+
+test('render output check: unlabeled frames from other diagram kinds are not membership-checked', () => {
+  const { code, result } = checkHtml('boundary-membership-unlabeled-frame', `
+    <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-0" x="40" y="40" width="300" height="120" rx="10"/>
+    <g id="node-step" data-node-id="step" data-node-label="Step" data-node-context="Workflow node"><rect x="80" y="70" width="120" height="50" rx="6" class="c-mask"/></g>
+  `, 'showcase', '0 0 420 240');
+  assert.equal(code, 0);
+  assert.equal(result.composition.metrics.boundaryMembershipIssues, 0);
+});

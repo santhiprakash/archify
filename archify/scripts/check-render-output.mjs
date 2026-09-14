@@ -41,6 +41,7 @@ let composition = {
     ambiguousCorridors: 0,
     containerBorderRuns: 0,
     labelRouteClearanceIssues: 0,
+    boundaryMembershipIssues: 0,
     minLabelRouteClearance: null,
     maxBends: 0,
     routesOverSuggestedBends: 0,
@@ -112,6 +113,8 @@ if (svgMatches.length === 1) {
   );
   const relationshipCrossings = collectRelationshipCrossings(arrows);
   const compositionFrames = collectCompositionFrames(beforeLegend);
+  const componentNodes = collectComponentNodes(beforeLegend);
+  const boundaryMembershipIssues = collectBoundaryMembership(compositionFrames, componentNodes);
   const containerBorderRuns = collectBorderRuns({
     routedRelations: arrows
       .filter((arrow) => arrow.from && arrow.to && arrow.borderSegments.length)
@@ -145,18 +148,24 @@ if (svgMatches.length === 1) {
   const rhythmIsError = qualityProfile === 'showcase';
   const labelClearanceIsError = qualityProfile === 'showcase';
   const desktopReadabilityIsError = qualityProfile === 'showcase';
+  const membershipIsError = qualityProfile === 'showcase';
+  const boundaryMembershipErrors = membershipIsError
+    ? boundaryMembershipIssues.filter((hit) => hit.containment === 'full').length
+    : 0;
   const compositionErrors = (qualityGatesEnforced ? containerBorderRuns.length : 0)
     + (crossingIsError ? relationshipCrossings.length : 0)
     + (corridorIsError ? ambiguousCorridors.length : 0)
     + (labelClearanceIsError ? labelRouteClearance.length : 0)
     + (rhythmIsError ? routeRhythmIssues.length : 0)
-    + (desktopReadabilityIsError && desktopReadabilityIssue ? 1 : 0);
+    + (desktopReadabilityIsError && desktopReadabilityIssue ? 1 : 0)
+    + boundaryMembershipErrors;
   const compositionWarnings = (qualityGatesEnforced ? 0 : containerBorderRuns.length)
     + (crossingIsError ? 0 : relationshipCrossings.length)
     + (corridorIsError ? 0 : ambiguousCorridors.length)
     + (labelClearanceIsError ? 0 : labelRouteClearance.length)
     + (rhythmIsError ? 0 : routeRhythmIssues.length)
-    + (desktopReadabilityIsError || !desktopReadabilityIssue ? 0 : 1);
+    + (desktopReadabilityIsError || !desktopReadabilityIssue ? 0 : 1)
+    + (boundaryMembershipIssues.length - boundaryMembershipErrors);
   composition = {
     schemaVersion: 1,
     profile: qualityProfile,
@@ -170,6 +179,7 @@ if (svgMatches.length === 1) {
       ambiguousCorridors: ambiguousCorridors.length,
       containerBorderRuns: containerBorderRuns.length,
       labelRouteClearanceIssues: labelRouteClearance.length,
+      boundaryMembershipIssues: boundaryMembershipIssues.length,
       minLabelRouteClearance: labelRouteMeasurements.length
         ? Math.round(Math.min(...labelRouteMeasurements.map((hit) => hit.clearance)) * 10) / 10
         : null,
@@ -231,6 +241,20 @@ if (svgMatches.length === 1) {
         length: Math.round(hit.length * 10) / 10,
         from: hit.start.map((value) => Math.round(value * 10) / 10),
         to: hit.end.map((value) => Math.round(value * 10) / 10),
+      })),
+      ...boundaryMembershipIssues.map((hit) => ({
+        severity: hit.containment === 'full' && membershipIsError ? 'error' : 'warning',
+        code: 'composition/boundary-membership',
+        component: { id: hit.node.id, label: hit.node.label },
+        frame: frameRecord(hit.frame),
+        containment: hit.containment,
+        componentRect: roundedRect(hit.node.rect),
+        frameRect: roundedRect({
+          x: hit.frame.x,
+          y: hit.frame.y,
+          width: hit.frame.width,
+          height: hit.frame.height,
+        }),
       })),
       ...(desktopReadabilityIssue ? [{
         severity: desktopReadabilityIsError ? 'error' : 'warning',
@@ -456,6 +480,7 @@ function collectCompositionFrames(fragment) {
       const frame = {
         kind,
         id: identity,
+        label: attrs['data-composition-frame-label'],
         x: numberAttr(attrs, 'x'),
         y: numberAttr(attrs, 'y'),
         width: numberAttr(attrs, 'width'),
@@ -486,7 +511,75 @@ function frameName(frame) {
 }
 
 function frameRecord(frame) {
-  return { kind: frame.kind, id: frame.id };
+  return { kind: frame.kind, id: frame.id, ...(frame.label ? { label: frame.label } : {}) };
+}
+
+// A boundary frame only claims the components listed in its authored `wraps`.
+// The artifact encodes membership through each node's data-node-context label
+// chain, so a node rendered inside a labeled frame whose context does not name
+// that frame is drawn as a member it is not. Full containment is the
+// unambiguous case; a straddling non-member stays a warning.
+function collectComponentNodes(fragment) {
+  const nodes = [];
+  for (const match of fragment.matchAll(/<g\b[^>]*\bdata-node-id="[^"]*"[^>]*>/gi)) {
+    const attrs = parseAttrs(match[0]);
+    const id = attrs['data-node-id'];
+    if (!id) continue;
+    const tail = fragment.slice(match.index + match[0].length);
+    const scopeLimit = tail.search(/<g\b|<\/g\s*>/i);
+    const scope = scopeLimit >= 0 ? tail.slice(0, scopeLimit) : tail;
+    const rectTag = scope.match(/<rect\b[^>]*>/i);
+    if (!rectTag) continue;
+    const rectAttrs = parseAttrs(rectTag[0]);
+    const rect = {
+      x: numberAttr(rectAttrs, 'x'),
+      y: numberAttr(rectAttrs, 'y'),
+      width: numberAttr(rectAttrs, 'width'),
+      height: numberAttr(rectAttrs, 'height'),
+    };
+    if (![rect.x, rect.y, rect.width, rect.height].every(Number.isFinite)) continue;
+    nodes.push({
+      id,
+      label: attrs['data-node-label'] || id,
+      context: attrs['data-node-context'] || '',
+      rect,
+    });
+  }
+  return nodes;
+}
+
+function collectBoundaryMembership(frames, nodes) {
+  const labeledFrames = frames.filter((frame) => (
+    typeof frame.label === 'string' && frame.label !== ''
+    && [frame.x, frame.y, frame.width, frame.height].every(Number.isFinite)
+  ));
+  const issues = [];
+  for (const frame of labeledFrames) {
+    const frameBox = {
+      x1: frame.x,
+      y1: frame.y,
+      x2: frame.x + frame.width,
+      y2: frame.y + frame.height,
+    };
+    for (const node of nodes) {
+      if (node.context.includes(frame.label)) continue;
+      const rect = node.rect;
+      const inside = rect.x >= frameBox.x1
+        && rect.y >= frameBox.y1
+        && rect.x + rect.width <= frameBox.x2
+        && rect.y + rect.height <= frameBox.y2;
+      if (inside) {
+        issues.push({ node, frame, containment: 'full' });
+        continue;
+      }
+      const overlaps = rect.x < frameBox.x2
+        && rect.x + rect.width > frameBox.x1
+        && rect.y < frameBox.y2
+        && rect.y + rect.height > frameBox.y1;
+      if (overlaps) issues.push({ node, frame, containment: 'partial' });
+    }
+  }
+  return issues;
 }
 
 function formatPoint(point) {

@@ -675,6 +675,63 @@ test('cli: validate emits structured json without keeping html output', () => {
   assert.deepEqual(new Set(fs.readdirSync(tmp)), before);
 });
 
+test('cli: validate showcase fails a non-member component drawn inside a boundary frame', () => {
+  const input = path.join(tmp, 'boundary-membership.architecture.json');
+  fs.writeFileSync(input, `${JSON.stringify({
+    schema_version: 1,
+    diagram_type: 'architecture',
+    meta: { title: 'Boundary membership repro', quality_profile: 'showcase' },
+    components: [
+      { id: 'app_a', type: 'backend', label: 'App A', pos: [260, 40], size: [150, 60] },
+      { id: 'app_b', type: 'backend', label: 'App B', pos: [260, 320], size: [150, 60] },
+      { id: 'third_party', type: 'external', label: 'Third-party API', sublabel: 'NOT in the boundary', pos: [260, 180], size: [150, 60] },
+    ],
+    boundaries: [
+      { kind: 'region', label: 'our private network', wraps: ['app_a', 'app_b'] },
+    ],
+    connections: [
+      { id: 'a-b', from: 'app_a', to: 'app_b', label: 'internal call', fromSide: 'left', toSide: 'left', via: [[180, 70], [180, 350]] },
+      { id: 'a-third', from: 'app_a', to: 'third_party', label: 'outbound', variant: 'dashed', fromSide: 'right', toSide: 'right', via: [[490, 70], [490, 210]] },
+    ],
+  }, null, 2)}\n`);
+
+  const result = run(['validate', 'architecture', input, '--quality', 'showcase', '--json']);
+  assert.equal(result.status, 1, result.stderr || result.stdout);
+  assert.equal(result.stderr, '');
+  const failure = JSON.parse(result.stdout);
+  assert.equal(failure.ok, false);
+  assert.equal(failure.command, 'validate');
+  assert.equal(failure.stage, 'check');
+  const issue = failure.checker.composition.issues.find(
+    (item) => item.code === 'composition/boundary-membership',
+  );
+  assert.equal(issue.severity, 'error');
+  assert.equal(issue.containment, 'full');
+  assert.deepEqual(issue.component, { id: 'third_party', label: 'Third-party API' });
+  assert.equal(issue.frame.label, 'our private network');
+  const [primary] = failure.diagnostics;
+  assert.equal(primary.code, 'composition/boundary-membership');
+  assert.equal(primary.subject.component.id, 'third_party');
+  assert.equal(primary.subject.frame.label, 'our private network');
+  assert.ok(primary.supportedFixes.some((fix) => /wraps/.test(fix)));
+  assert.ok(primary.supportedFixes.some((fix) => /move/i.test(fix)));
+});
+
+test('cli: validate showcase flags the shipped production-deployment straddle as a warning', () => {
+  const input = path.join(skillRoot, 'examples/production-deployment.architecture.json');
+  const result = run(['validate', 'architecture', input, '--json']);
+  assert.equal(result.status, 0, result.stderr);
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(parsed.ok, true);
+  const issue = parsed.composition.issues.find(
+    (item) => item.code === 'composition/boundary-membership',
+  );
+  assert.equal(issue.severity, 'warning');
+  assert.equal(issue.containment, 'partial');
+  assert.equal(issue.component.id, 'audit');
+  assert.equal(issue.frame.label, 'private application network');
+});
+
 test('cli: validate JSON exposes only the primary v1 column-capacity diagnostic', () => {
   const input = path.join(tmp, 'pinned-column-capacity.workflow.json');
   fs.writeFileSync(input, `${JSON.stringify({

@@ -730,6 +730,7 @@ receipt 99 checks / 11 artifacts / deterministic hashes</pre>
           "ambiguousCorridors": 0,
           "containerBorderRuns": 0,
           "labelRouteClearanceIssues": 0,
+          "boundaryMembershipIssues": 0,
           "minLabelRouteClearance": 29,
           "desktopReadabilityIssues": 0,
           "minProjectedNodeTextPx": null,
@@ -823,13 +824,14 @@ receipt 99 checks / 11 artifacts / deterministic hashes</pre>
         "status": "pass",
         "summary": {
           "errors": 0,
-          "warnings": 0
+          "warnings": 1
         },
         "metrics": {
           "properCrossings": 0,
           "ambiguousCorridors": 0,
           "containerBorderRuns": 0,
           "labelRouteClearanceIssues": 0,
+          "boundaryMembershipIssues": 1,
           "minLabelRouteClearance": 36,
           "desktopReadabilityIssues": 0,
           "minProjectedNodeTextPx": null,
@@ -850,7 +852,34 @@ receipt 99 checks / 11 artifacts / deterministic hashes</pre>
           "segmentPx": 16,
           "microSegmentPx": 8
         },
-        "issues": []
+        "issues": [
+          {
+            "severity": "warning",
+            "code": "composition/boundary-membership",
+            "component": {
+              "id": "audit",
+              "label": "Audit Archive"
+            },
+            "frame": {
+              "kind": "security-group",
+              "id": "1",
+              "label": "private application network"
+            },
+            "containment": "partial",
+            "componentRect": {
+              "x": 1190,
+              "y": 450,
+              "width": 126,
+              "height": 62
+            },
+            "frameRect": {
+              "x": 616,
+              "y": 171,
+              "width": 714,
+              "height": 316
+            }
+          }
+        ]
       }
     },
     {
@@ -930,6 +959,7 @@ receipt 99 checks / 11 artifacts / deterministic hashes</pre>
           "ambiguousCorridors": 0,
           "containerBorderRuns": 0,
           "labelRouteClearanceIssues": 0,
+          "boundaryMembershipIssues": 0,
           "minLabelRouteClearance": 8,
           "desktopReadabilityIssues": 0,
           "minProjectedNodeTextPx": null,
@@ -1030,6 +1060,7 @@ receipt 99 checks / 11 artifacts / deterministic hashes</pre>
           "ambiguousCorridors": 0,
           "containerBorderRuns": 0,
           "labelRouteClearanceIssues": 0,
+          "boundaryMembershipIssues": 0,
           "minLabelRouteClearance": 36.3,
           "desktopReadabilityIssues": 0,
           "minProjectedNodeTextPx": null,
@@ -1130,6 +1161,7 @@ receipt 99 checks / 11 artifacts / deterministic hashes</pre>
           "ambiguousCorridors": 0,
           "containerBorderRuns": 0,
           "labelRouteClearanceIssues": 0,
+          "boundaryMembershipIssues": 0,
           "minLabelRouteClearance": 119,
           "desktopReadabilityIssues": 0,
           "minProjectedNodeTextPx": null,
@@ -1230,6 +1262,7 @@ receipt 99 checks / 11 artifacts / deterministic hashes</pre>
           "ambiguousCorridors": 0,
           "containerBorderRuns": 0,
           "labelRouteClearanceIssues": 0,
+          "boundaryMembershipIssues": 0,
           "minLabelRouteClearance": 44.3,
           "desktopReadabilityIssues": 0,
           "minProjectedNodeTextPx": null,
@@ -1330,6 +1363,7 @@ receipt 99 checks / 11 artifacts / deterministic hashes</pre>
           "ambiguousCorridors": 0,
           "containerBorderRuns": 0,
           "labelRouteClearanceIssues": 0,
+          "boundaryMembershipIssues": 0,
           "minLabelRouteClearance": 22,
           "desktopReadabilityIssues": 0,
           "minProjectedNodeTextPx": null,
@@ -1430,6 +1464,7 @@ receipt 99 checks / 11 artifacts / deterministic hashes</pre>
           "ambiguousCorridors": 0,
           "containerBorderRuns": 0,
           "labelRouteClearanceIssues": 0,
+          "boundaryMembershipIssues": 0,
           "minLabelRouteClearance": 9,
           "desktopReadabilityIssues": 0,
           "minProjectedNodeTextPx": null,
@@ -1530,6 +1565,7 @@ receipt 99 checks / 11 artifacts / deterministic hashes</pre>
           "ambiguousCorridors": 0,
           "containerBorderRuns": 0,
           "labelRouteClearanceIssues": 0,
+          "boundaryMembershipIssues": 0,
           "minLabelRouteClearance": null,
           "desktopReadabilityIssues": 0,
           "minProjectedNodeTextPx": null,
@@ -1630,6 +1666,7 @@ receipt 99 checks / 11 artifacts / deterministic hashes</pre>
           "ambiguousCorridors": 0,
           "containerBorderRuns": 0,
           "labelRouteClearanceIssues": 0,
+          "boundaryMembershipIssues": 0,
           "minLabelRouteClearance": null,
           "desktopReadabilityIssues": 0,
           "minProjectedNodeTextPx": null,
@@ -1730,6 +1767,7 @@ receipt 99 checks / 11 artifacts / deterministic hashes</pre>
           "ambiguousCorridors": 0,
           "containerBorderRuns": 0,
           "labelRouteClearanceIssues": 0,
+          "boundaryMembershipIssues": 0,
           "minLabelRouteClearance": 20,
           "desktopReadabilityIssues": 0,
           "minProjectedNodeTextPx": null,
