@@ -56,8 +56,11 @@ declarations for the same id are rejected rather than silently resolved.
 | `id>Text]` | `external` |
 | `id/Text\\` | `backend` |
 
-Quoted labels (`id["Text with ] inside"]`) preserve brackets verbatim. Label
-text is imported as-is; HTML/markdown inside labels is never interpreted.
+Quoted labels (`id["Text with ] inside"]`) preserve brackets and surrounding
+whitespace verbatim. Label text is imported as-is; HTML/markdown inside labels
+is never interpreted. Explicit labels that are empty or contain only
+whitespace are rejected with `import/flowchart-empty-label` instead of falling
+back to the node id, because a blank label is not representable in Archify.
 
 ### Edge declarations
 
@@ -73,6 +76,12 @@ Open links — solid `---` / `--->` and dotted `-.-` / `-..-` — are **not**
 supported: they carry no arrowhead, and Archify connections always carry an
 arrowhead, so remapping them would change their meaning. They exit non-zero
 with `import/unsupported-edge-syntax`.
+
+Edge labels must contain at least one non-whitespace character; a blank or
+whitespace-only edge label exits with `import/flowchart-empty-edge-label`.
+Labels, node labels, and subgraph titles must also be free of XML 1.0
+disallowed characters (for example U+0000); any such character is rejected with
+`import/xml-disallowed-character` so that the delivered SVG remains well-formed.
 
 ### Subgraphs
 
@@ -124,7 +133,10 @@ Importer diagnostic codes (all prefixed `import/`):
 - `import/flowchart-unclosed-edge-label` — `|` label not closed.
 - `import/flowchart-unbalanced-end` / `import/flowchart-unclosed-subgraph` — `subgraph`/`end` mismatch.
 - `import/flowchart-undefined-source` / `import/flowchart-undefined-target` — edge endpoint never declared.
+- `import/flowchart-empty-label` — a node shape or quoted label is empty or contains only whitespace.
+- `import/flowchart-empty-edge-label` — an edge label is empty or contains only whitespace.
 - `import/flowchart-conflicting-node-declaration` — same id declared twice with different explicit text/shape.
+- `import/xml-disallowed-character` — a label or title contains a character (for example U+0000) that cannot be represented in the delivered SVG.
 - `import/unsupported-edge-syntax` — open link `---` (or long-arrow form).
 - `import/unsupported-direction-directive` — Mermaid `direction` directive.
 - `import/unsupported-keyword-*` — styling/interaction directives (`classDef`, `style`, `click`, …).

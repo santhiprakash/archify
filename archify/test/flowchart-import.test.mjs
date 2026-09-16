@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { parseFlowchart, importFlowchart } from '../importers/flowchart.mjs';
 import { commitImportOutput, OutputPathError } from '../renderers/shared/output-path.mjs';
+import { SaxesParser } from 'saxes';
+import { extractSvgs } from './helpers/xml.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const skillRoot = path.resolve(__dirname, '..');
@@ -824,4 +826,120 @@ test('importFlowchart receipt has stable schemaVersion and command fields', () =
   assert.equal(result.receipt.schemaVersion, 1);
   assert.equal(result.receipt.command, 'import');
   assert.equal(result.receipt.source, 'mermaid-flowchart');
+});
+
+// --- Text preservation / P2 review fixes -----------------------------------
+
+test('empty quoted component label is rejected instead of falling back to the id', () => {
+  const result = parseFlowchart('flowchart LR\n  A[""] --> B[Next]\n');
+  assert.equal(result.ok, false);
+  assert.ok(result.diagnostics.some((d) => d.code === 'import/flowchart-empty-label'));
+});
+
+test('whitespace-only quoted component label is rejected instead of falling back to the id', () => {
+  const result = parseFlowchart('flowchart LR\n  A[" "] --> B[Next]\n');
+  assert.equal(result.ok, false);
+  assert.ok(result.diagnostics.some((d) => d.code === 'import/flowchart-empty-label'));
+});
+
+test('nonempty quoted component labels are preserved as authored', () => {
+  const result = parseFlowchart('flowchart LR\n  A["  Next  "] --> B[Done]\n');
+  assert.ok(result.ok, `Expected ok, got: ${JSON.stringify(result.diagnostics)}`);
+  const a = result.ir.components.find((c) => c.id === 'A');
+  assert.equal(a.label, '  Next  ', 'Leading and trailing spaces inside the quotes must be preserved');
+});
+
+test('empty unquoted component shape is rejected instead of falling back to the id', () => {
+  const result = parseFlowchart('flowchart LR\n  A[] --> B[Next]\n');
+  assert.equal(result.ok, false);
+  assert.ok(result.diagnostics.some((d) => d.code === 'import/flowchart-empty-label'));
+});
+
+test('whitespace-only unquoted component shape is rejected instead of falling back to the id', () => {
+  const result = parseFlowchart('flowchart LR\n  A[ ] --> B[Next]\n');
+  assert.equal(result.ok, false);
+  assert.ok(result.diagnostics.some((d) => d.code === 'import/flowchart-empty-label'));
+});
+
+test('invalid XML characters in component labels are rejected at the importer', () => {
+  const result = parseFlowchart('flowchart LR\n  A[Hello\u0000world] --> B[Next]\n');
+  assert.equal(result.ok, false);
+  const xmlDiag = result.diagnostics.find((d) => d.code === 'import/xml-disallowed-character');
+  assert.ok(xmlDiag, `Expected xml diagnostic, got: ${JSON.stringify(result.diagnostics)}`);
+  assert.ok(xmlDiag.message.includes('U+0000'));
+});
+
+test('invalid XML characters in pipe edge labels are rejected at the importer', () => {
+  const result = parseFlowchart('flowchart LR\n  A[Source] -->|\u0000| B[Target]\n');
+  assert.equal(result.ok, false);
+  const xmlDiag = result.diagnostics.find((d) => d.code === 'import/xml-disallowed-character');
+  assert.ok(xmlDiag, `Expected xml diagnostic, got: ${JSON.stringify(result.diagnostics)}`);
+  assert.ok(xmlDiag.message.includes('U+0000'));
+});
+
+test('invalid XML characters in inline edge labels are rejected at the importer', () => {
+  const result = parseFlowchart('flowchart LR\n  A[Source] -- \u0000 --> B[Target]\n');
+  assert.equal(result.ok, false);
+  const xmlDiag = result.diagnostics.find((d) => d.code === 'import/xml-disallowed-character');
+  assert.ok(xmlDiag, `Expected xml diagnostic, got: ${JSON.stringify(result.diagnostics)}`);
+  assert.ok(xmlDiag.message.includes('U+0000'));
+});
+
+test('whitespace-only pipe edge labels are rejected', () => {
+  const result = parseFlowchart('flowchart LR\n  A[Source] -->| | B[Target]\n');
+  assert.equal(result.ok, false);
+  assert.ok(result.diagnostics.some((d) => d.code === 'import/flowchart-empty-edge-label'));
+});
+
+test('invalid XML characters in subgraph titles are rejected at the importer', () => {
+  const result = parseFlowchart('flowchart LR\n  subgraph "Hello\u0000world"\n    A[Inside]\n  end\n  B[Outside] --> A\n');
+  assert.equal(result.ok, false);
+  const xmlDiag = result.diagnostics.find((d) => d.code === 'import/xml-disallowed-character');
+  assert.ok(xmlDiag, `Expected xml diagnostic, got: ${JSON.stringify(result.diagnostics)}`);
+  assert.ok(xmlDiag.message.includes('U+0000'));
+});
+
+test('whitespace-only subgraph titles are rejected', () => {
+  const result = parseFlowchart('flowchart LR\n  subgraph " "\n    A[Inside]\n  end\n  B[Outside] --> A\n');
+  assert.equal(result.ok, false);
+  assert.ok(result.diagnostics.some((d) => d.code === 'import/subgraph-empty-title'));
+});
+
+function parseXml(source) {
+  return new SaxesParser({ xmlns: true }).write(source).close();
+}
+
+test('imported and delivered flowcharts produce XML-clean SVG without disallowed characters', () => {
+  const cli = path.join(skillRoot, 'bin', 'archify.mjs');
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archify-xml-clean-'));
+  const src = path.join(tmpDir, 'clean.mmd');
+  const ir = path.join(tmpDir, 'clean.json');
+  const html = path.join(tmpDir, 'clean.html');
+  const source = [
+    'flowchart LR',
+    '  subgraph "Edge"',
+    '    Web[Web App]',
+    '  end',
+    '  Web -->|Long label text| API(API Server)',
+    '  API --> DB[(PostgreSQL)]',
+  ].join('\n');
+  fs.writeFileSync(src, source);
+  try {
+    const imported = runCliImport(['import', 'flowchart', src, ir, '--json']);
+    assert.equal(imported.status, 0, `import failed: ${imported.stderr}`);
+    const validated = runCliValidate(ir);
+    assert.equal(validated.status, 0, `validate failed: ${validated.stdout}`);
+    const delivered = spawnSync(process.execPath, [cli, 'deliver', 'architecture', ir, html, '--quality', 'showcase', '--json'], {
+      encoding: 'utf8',
+      stdio: 'pipe',
+    });
+    assert.equal(delivered.status, 0, `deliver failed: ${delivered.stdout}`);
+    const svgs = extractSvgs(fs.readFileSync(html, 'utf8'));
+    assert.ok(svgs.direct.length > 0, 'delivered HTML should contain an SVG');
+    for (const svg of svgs.direct) {
+      assert.doesNotThrow(() => parseXml(svg), 'delivered SVG must be well-formed XML');
+    }
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 });

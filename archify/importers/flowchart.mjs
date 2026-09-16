@@ -62,6 +62,44 @@ function diag(code, message, line, column, extras = {}) {
   };
 }
 
+// Characters disallowed in XML 1.0 content (complement of #x9 | #xA | #xD |
+// [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]).
+const XML_INVALID_CHAR_RE = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F\uD800-\uDFFF\uFFFE\uFFFF]/u;
+
+function isBlank(text) {
+  return /^\s*$/u.test(text);
+}
+
+// Validate a piece of user-authored text before it becomes IR. Returns a
+// diagnostic if the text is blank/whitespace-only or contains an XML 1.0
+// disallowed character; otherwise returns null so the caller can use the text.
+function validateLabelText(text, lineNo, startColumn, { code, kind, context }) {
+  if (isBlank(text)) {
+    return diag(
+      code,
+      `${kind} has no representable text; ${context} must contain at least one non-whitespace character.`,
+      lineNo, startColumn,
+      {
+        supportedFixes: [`provide a non-empty ${context}`],
+      },
+    );
+  }
+  const match = XML_INVALID_CHAR_RE.exec(text);
+  if (match) {
+    const cp = match[0].codePointAt(0).toString(16).toUpperCase();
+    const display = cp.length > 4 ? `U+${cp}` : `U+${cp.padStart(4, '0')}`;
+    return diag(
+      'import/xml-disallowed-character',
+      `${kind} contains ${display}, a character that cannot be represented in the delivered SVG; remove or replace it before importing.`,
+      lineNo, startColumn + match.index,
+      {
+        supportedFixes: [`replace ${display} in the ${context} with a representable character`],
+      },
+    );
+  }
+  return null;
+}
+
 // --- Parser --------------------------------------------------------------
 
 /**
@@ -165,25 +203,30 @@ export function parseFlowchart(source) {
       // title alone — keeping the raw "id [Title]" text as the label both
       // corrupted the emitted topology and hid the authored identity from
       // edge-endpoint resolution below.
-      const rest = subgraphMatch[1].trim();
+      const rest = subgraphMatch[1];
+      const restStart = subgraphMatch.index + subgraphMatch[0].indexOf(rest);
       let authoredId = null;
       let label = rest;
+      let textStart = restStart;
       const idBracket = rest.match(/^(?:([^\[\]]+?)\s*)?\[(.*)\]$/);
       if (idBracket) {
         authoredId = (idBracket[1] ?? '').trim() || null;
-        label = idBracket[2].trim().replace(/^["']|["']$/g, '');
+        label = idBracket[2].replace(/^["']|["']$/g, '');
+        const bracketOffset = idBracket[0].indexOf('[');
+        textStart = restStart + bracketOffset + 1;
+        if (idBracket[2].startsWith('"') || idBracket[2].startsWith("'")) {
+          textStart += 1;
+        }
       } else if (rest.length >= 2 && rest.startsWith('"') && rest.endsWith('"')) {
         label = rest.slice(1, -1);
+        textStart = restStart + 1;
       }
-      if (!label) {
-        diagnostics.push(diag(
-          'import/subgraph-empty-title',
-          'Subgraph declaration has an empty title; every region needs a non-empty label.',
-          lineNo, 1,
-          {
-            supportedFixes: ['give the subgraph a title, e.g. "subgraph Frontend"'],
-          },
-        ));
+      const titleCheck = validateLabelText(
+        label, lineNo, textStart + 1,
+        { code: 'import/subgraph-empty-title', kind: 'Subgraph title', context: 'boundary title' },
+      );
+      if (titleCheck) {
+        diagnostics.push(titleCheck);
         return { ok: false, diagnostics };
       }
       const id = `sg${subgraphCounter}`;
@@ -488,8 +531,9 @@ function parseStatement(line, lineNo) {
 
     // Try to parse an edge first (if we already have a lastNode).
     if (lastNode !== null) {
-      const edge = parseEdge(line, pos);
+      const edge = parseEdge(line, pos, lineNo);
       if (edge) {
+        if (edge.ok === false) return { ok: false, diagnostics: edge.diagnostics };
         pos = edge.nextPos;
         // After the edge, try to parse a label.
         while (pos < line.length && /\s/.test(line[pos])) pos += 1;
@@ -508,7 +552,13 @@ function parseStatement(line, lineNo) {
               )],
             };
           }
-          label = line.slice(pos + 1, labelEnd).trim();
+          const rawLabel = line.slice(pos + 1, labelEnd);
+          const labelCheck = validateLabelText(
+            rawLabel, lineNo, pos + 2,
+            { code: 'import/flowchart-empty-edge-label', kind: 'Edge label', context: 'relationship label' },
+          );
+          if (labelCheck) return { ok: false, diagnostics: [labelCheck] };
+          label = rawLabel;
           pos = labelEnd + 1;
           while (pos < line.length && /\s/.test(line[pos])) pos += 1;
         }
@@ -620,11 +670,14 @@ function parseNode(line, pos, lineNo) {
             )],
           };
         }
-        const text = line.slice(contentStart + 1, quoteEnd).trim();
-        if (text) {
-          label = text;
-          explicit = true;
-        }
+        const text = line.slice(contentStart + 1, quoteEnd);
+        const textCheck = validateLabelText(
+          text, lineNo, contentStart + 2,
+          { code: 'import/flowchart-empty-label', kind: `Node "${id}" label`, context: 'component label' },
+        );
+        if (textCheck) return { ok: false, diagnostics: [textCheck] };
+        label = text;
+        explicit = true;
         type = shape.type;
         pos = afterQuote + shape.close.length;
       } else {
@@ -640,11 +693,14 @@ function parseNode(line, pos, lineNo) {
             )],
           };
         }
-        const text = line.slice(contentStart, closeIdx).trim();
-        if (text) {
-          label = text;
-          explicit = true;
-        }
+        const text = line.slice(contentStart, closeIdx);
+        const textCheck = validateLabelText(
+          text, lineNo, contentStart + 1,
+          { code: 'import/flowchart-empty-label', kind: `Node "${id}" label`, context: 'component label' },
+        );
+        if (textCheck) return { ok: false, diagnostics: [textCheck] };
+        label = text;
+        explicit = true;
         type = shape.type;
         pos = closeIdx + shape.close.length;
       }
@@ -659,24 +715,38 @@ function parseNode(line, pos, lineNo) {
   };
 }
 
-function parseEdge(line, pos) {
+function parseEdge(line, pos, lineNo) {
   for (const pattern of EDGE_PATTERNS) {
     const match = pattern.re.exec(line.slice(pos));
     if (match) {
-      return { variant: pattern.variant, nextPos: pos + match[0].length };
+      return { ok: true, variant: pattern.variant, nextPos: pos + match[0].length };
     }
   }
 
   // Check for -- text --> pattern.
-  const labeledArrow = line.slice(pos).match(/^--\s+([^>-]+?)\s+-->/);
+  const labeledArrow = line.slice(pos).match(/^--\s+([^>-]+?)\s+-->/d);
   if (labeledArrow) {
-    return { variant: 'solid', label: labeledArrow[1].trim(), nextPos: pos + labeledArrow[0].length };
+    const label = labeledArrow[1];
+    const labelStart = pos + labeledArrow.indices[1][0] + 1;
+    const labelCheck = validateLabelText(
+      label, lineNo, labelStart,
+      { code: 'import/flowchart-empty-edge-label', kind: 'Edge label', context: 'relationship label' },
+    );
+    if (labelCheck) return { ok: false, diagnostics: [labelCheck] };
+    return { ok: true, variant: 'solid', label, labelStart, nextPos: pos + labeledArrow[0].length };
   }
 
   // Check for -. text .-> pattern.
-  const dottedLabeled = line.slice(pos).match(/^-\.\s+([^>.]+?)\s+\.->/);
+  const dottedLabeled = line.slice(pos).match(/^-\.\s+([^>.]+?)\s+\.->/d);
   if (dottedLabeled) {
-    return { variant: 'dashed', label: dottedLabeled[1].trim(), nextPos: pos + dottedLabeled[0].length };
+    const label = dottedLabeled[1];
+    const labelStart = pos + dottedLabeled.indices[1][0] + 1;
+    const labelCheck = validateLabelText(
+      label, lineNo, labelStart,
+      { code: 'import/flowchart-empty-edge-label', kind: 'Edge label', context: 'relationship label' },
+    );
+    if (labelCheck) return { ok: false, diagnostics: [labelCheck] };
+    return { ok: true, variant: 'dashed', label, labelStart, nextPos: pos + dottedLabeled[0].length };
   }
 
   return null;
