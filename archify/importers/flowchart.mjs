@@ -27,11 +27,13 @@ const NODE_SHAPES = [
 ];
 
 const EDGE_PATTERNS = [
-  { re: /^===>/, variant: 'emphasis' },
-  { re: /^==>/, variant: 'emphasis' },
-  { re: /^-\.\.->/, variant: 'dashed' },
-  { re: /^-\.->/, variant: 'dashed' },
-  { re: /^-->/, variant: 'solid' },
+  // Mermaid link length is controlled by adding extra repeated characters;
+  // the arrowhead at the end stays a single ">".  "--->" and "---->" are
+  // still directed "solid" edges, and the same for "===>"/"====>" and
+  // dotted "-...->" variants.
+  { re: /^==[=]*>/, variant: 'emphasis' },
+  { re: /^-\.+->/, variant: 'dashed' },
+  { re: /^--[-]*>/, variant: 'solid' },
 ];
 
 const UNSUPPORTED_KEYWORDS = new Set([
@@ -637,11 +639,12 @@ function parseStatement(line, lineNo) {
         continue;
       }
 
-      // Mermaid's open links — solid "---" (and long-arrow forms like "--->")
-      // and dotted "-.-" (and longer dotted forms like "-..-") — carry no
-      // arrowhead, so remapping them to a directed connection would silently
-      // change their meaning.
-      const openLink = line.slice(pos).match(/^(---+|-\.(?:\.)*-)/);
+      // Mermaid's open links — solid "---" / "----" and dotted "-.-" /
+      // "-..-" — carry no arrowhead, so remapping them to a directed
+      // connection would silently change their meaning.  The negative
+      // lookaheads keep long directed arrows like "--->" and "-...->" out of
+      // the open-link match; those are handled by parseEdge first.
+      const openLink = line.slice(pos).match(/^(---+(?![->])|-\.+-(?![-.>]))/);
       if (openLink) {
         return {
           ok: false,
@@ -672,8 +675,11 @@ function parseStatement(line, lineNo) {
 }
 
 function parseNode(line, pos, lineNo) {
-  // Read the node ID.
-  const idMatch = line.slice(pos).match(/^([A-Za-z][A-Za-z0-9_-]*)/);
+  // Read the node ID.  Hyphens are allowed, but a hyphen that is the start
+  // of an edge operator (-->, -...->, ====>, ---, -.-, etc.) must not be
+  // consumed into the ID; otherwise unspaced edges like "A-->B" are parsed
+  // as a node id "A--" followed by an unclosed shape.
+  const idMatch = line.slice(pos).match(/^([A-Za-z](?:[A-Za-z0-9_]|-(?![-.=>]))*)/);
   if (!idMatch) {
     return {
       ok: false,

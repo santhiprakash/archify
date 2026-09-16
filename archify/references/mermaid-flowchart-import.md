@@ -72,7 +72,11 @@ back to the node id, because a blank label is not representable in Archify.
 | `-- Text -->`, `-. Text .->` | directed with `label: "Text"` |
 | `A -->\|Text\| B` | directed with `label: "Text"` |
 
-Open links — solid `---` / `--->` and dotted `-.-` / `-..-` — are **not**
+Longer directed arrows are also preserved as their base variant: `--->` and
+`---->` are `solid`, `-.-->` and `-...->` are `dashed`, and `===>` and `====>`
+are `emphasis`.
+
+Open links — solid `---` / `----` and dotted `-.-` / `-..-` — are **not**
 supported: they carry no arrowhead, and Archify connections always carry an
 arrowhead, so remapping them would change their meaning. They exit non-zero
 with `import/unsupported-edge-syntax`.
@@ -107,7 +111,7 @@ $ node bin/archify.mjs import flowchart unsupported-open-link.mmd --json
   "command": "import",
   "source": "mermaid-flowchart",
   "ok": false,
-  "error": "Mermaid open link \"---\" (and long-arrow forms like \"--->\") is not supported: ...",
+  "error": "Mermaid open link \"---\" (and dotted forms like \"-.-\") is not supported: ...",
   "diagnostics": [
     {
       "code": "import/unsupported-edge-syntax",
@@ -137,7 +141,7 @@ Importer diagnostic codes (all prefixed `import/`):
 - `import/flowchart-empty-edge-label` — an edge label is empty or contains only whitespace.
 - `import/flowchart-conflicting-node-declaration` — same id declared twice with different explicit text/shape.
 - `import/xml-disallowed-character` — a label or title contains a character (for example U+0000) that cannot be represented in the delivered SVG.
-- `import/unsupported-edge-syntax` — open link `---` (or long-arrow form).
+- `import/unsupported-edge-syntax` — open link `---` / `-.-` / `-..-` (arrowless).
 - `import/unsupported-direction-directive` — Mermaid `direction` directive.
 - `import/unsupported-keyword-*` — styling/interaction directives (`classDef`, `style`, `click`, …).
 

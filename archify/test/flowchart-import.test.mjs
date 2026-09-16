@@ -251,6 +251,90 @@ test('CLI import command exits non-zero for the open link with a stable diagnost
   assert.ok(receipt.diagnostics.some((d) => d.code === 'import/unsupported-edge-syntax'));
 });
 
+test('CLI import command emits a schema-v1 receipt for a missing input in --json mode', () => {
+  const cli = path.join(skillRoot, 'bin', 'archify.mjs');
+  const result = spawnSync(process.execPath, [cli, 'import', 'flowchart', '--json'], {
+    encoding: 'utf8',
+    stdio: 'pipe',
+  });
+  assert.notEqual(result.status, 0, 'Expected non-zero exit for missing input');
+  const receipt = JSON.parse(result.stdout.trim());
+  assert.equal(receipt.schemaVersion, 1);
+  assert.equal(receipt.command, 'import');
+  assert.equal(receipt.ok, false);
+  assert.ok(receipt.diagnostics.some((d) => d.code === 'import/missing-input'));
+});
+
+test('CLI import command emits a schema-v1 receipt for an unsupported format in --json mode', () => {
+  const cli = path.join(skillRoot, 'bin', 'archify.mjs');
+  const result = spawnSync(process.execPath, [cli, 'import', 'not-a-format', 'input.mmd', '--json'], {
+    encoding: 'utf8',
+    stdio: 'pipe',
+  });
+  assert.notEqual(result.status, 0, 'Expected non-zero exit for unsupported format');
+  const receipt = JSON.parse(result.stdout.trim());
+  assert.equal(receipt.ok, false);
+  assert.ok(receipt.diagnostics.some((d) => d.code === 'import/unsupported-format'));
+});
+
+test('CLI import command emits a schema-v1 receipt for an unknown option in --json mode', () => {
+  const cli = path.join(skillRoot, 'bin', 'archify.mjs');
+  const result = spawnSync(process.execPath, [cli, 'import', 'flowchart', 'input.mmd', '--bogus', '--json'], {
+    encoding: 'utf8',
+    stdio: 'pipe',
+  });
+  assert.notEqual(result.status, 0, 'Expected non-zero exit for unknown option');
+  const receipt = JSON.parse(result.stdout.trim());
+  assert.equal(receipt.ok, false);
+  assert.ok(receipt.diagnostics.some((d) => d.code === 'import/unknown-option'));
+});
+
+test('unspaced directed edge "A-->B" is parsed rather than mangled into a node id', () => {
+  const result = parseFlowchart('flowchart LR\nA-->B\n');
+  assert.ok(result.ok, `Expected ok, got: ${JSON.stringify(result.diagnostics)}`);
+  assert.ok(result.ir.connections.some((c) => c.from === 'A' && c.to === 'B'));
+});
+
+test('spaced open link "A --- B" is rejected with unsupported-edge-syntax', () => {
+  const result = parseFlowchart('flowchart LR\nA --- B\n');
+  assert.ok(!result.ok, 'Expected the open link to be rejected');
+  const diag = result.diagnostics.find((d) => d.code === 'import/unsupported-edge-syntax');
+  assert.ok(diag, `Expected unsupported-edge-syntax, got: ${JSON.stringify(result.diagnostics)}`);
+});
+
+test('non-spaced open link "A---B" is rejected rather than silently omitted', () => {
+  const result = parseFlowchart('flowchart LR\nA---B\n');
+  assert.ok(!result.ok, 'Expected the open link to be rejected');
+  const diag = result.diagnostics.find((d) => d.code === 'import/unsupported-edge-syntax');
+  assert.ok(diag, `Expected unsupported-edge-syntax, got: ${JSON.stringify(result.diagnostics)}`);
+  // The edge must not be silently dropped.
+  assert.ok(!result.ir || result.ir.connections.length === 0,
+    'A rejected open link must not leave a connection');
+});
+
+test('long directed arrows are mapped to their edge variant', () => {
+  const solid = parseFlowchart('flowchart LR\nA--->B\n');
+  assert.ok(solid.ok, `Expected long solid arrow to pass, got: ${JSON.stringify(solid.diagnostics)}`);
+  // The default "solid" variant is omitted from the IR to keep it compact.
+  assert.equal(solid.ir.connections[0].variant || 'solid', 'solid');
+
+  const dashed = parseFlowchart('flowchart LR\nA-...->B\n');
+  assert.ok(dashed.ok, `Expected long dotted arrow to pass, got: ${JSON.stringify(dashed.diagnostics)}`);
+  assert.equal(dashed.ir.connections[0].variant, 'dashed');
+
+  const emphasis = parseFlowchart('flowchart LR\nA====>B\n');
+  assert.ok(emphasis.ok, `Expected long thick arrow to pass, got: ${JSON.stringify(emphasis.diagnostics)}`);
+  assert.equal(emphasis.ir.connections[0].variant, 'emphasis');
+});
+
+test('node ids with internal hyphens are preserved when not starting an edge', () => {
+  const result = parseFlowchart('flowchart LR\nA-B --> B-C\n');
+  assert.ok(result.ok, `Expected ok, got: ${JSON.stringify(result.diagnostics)}`);
+  assert.ok(result.ir.components.some((c) => c.id === 'A-B'));
+  assert.ok(result.ir.components.some((c) => c.id === 'B-C'));
+  assert.ok(result.ir.connections.some((c) => c.from === 'A-B' && c.to === 'B-C'));
+});
+
 test('every imported valid fixture passes showcase layout validation', () => {
   const cli = path.join(skillRoot, 'bin', 'archify.mjs');
   const fixtures = fs.readdirSync(fixturesDir).filter((f) => f.startsWith('valid-') && f.endsWith('.mmd'));

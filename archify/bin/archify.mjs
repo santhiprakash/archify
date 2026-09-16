@@ -2084,26 +2084,116 @@ function commandValidate(args) {
   if (exitCode !== 0) process.exitCode = exitCode;
 }
 
+function emitImportFailure(json, receipt, exitCode = 1) {
+  if (json) {
+    console.log(JSON.stringify(receipt, null, 2));
+  } else {
+    console.error(formatDiagnostics(receipt.error, receipt.diagnostics));
+  }
+  process.exit(exitCode);
+}
+
 async function commandImport(args) {
   // The output-commit safety runtime is loaded like the rest of the
   // output-path runtime so an installed skill missing it reports a structured
   // doctor/diagnostic failure instead of crashing the CLI at startup.
   const { commitImportOutput, resolveOutputPath } = await import('../renderers/shared/output-path.mjs');
-  const [format, ...rest] = args;
-  if (!format) fail('Usage: archify import flowchart <input.mmd> [output.json] [--json]');
-  if (format !== 'flowchart') fail(`Unsupported import format "${format}". Supported: flowchart`);
 
-  let json = false;
-  let inputPath = null;
-  let outputPath = null;
-  for (const arg of rest) {
-    if (arg === '--json') { json = true; continue; }
-    if (arg.startsWith('--')) fail(`Unknown import option "${arg}".`);
-    if (inputPath === null) { inputPath = arg; continue; }
-    if (outputPath === null) { outputPath = arg; continue; }
-    fail(`Unexpected argument "${arg}".`);
+  // Detect --json from the raw argument list before any positional validation,
+  // so missing/unsupported formats, unknown options, and missing inputs are
+  // reported through the schema-v1 receipt contract when JSON output is asked.
+  const json = args.includes('--json');
+  const positional = [];
+  for (const arg of args) {
+    if (arg === '--json') continue;
+    if (arg.startsWith('--')) {
+      emitImportFailure(json, {
+        schemaVersion: 1,
+        command: 'import',
+        source: 'mermaid-flowchart',
+        ok: false,
+        error: `Unknown import option "${arg}".`,
+        diagnostics: [diagnostic({
+          code: 'import/unknown-option',
+          message: `Unknown import option "${arg}".`,
+          subject: { option: arg },
+          evidence: { source: { argument: arg } },
+          supportedFixes: ['use "--json" if you want machine-readable output, otherwise remove the unknown option'],
+        })],
+      });
+    }
+    positional.push(arg);
   }
-  if (!inputPath) fail('Usage: archify import flowchart <input.mmd> [output.json] [--json]');
+
+  const [format, inputPath, outputPath, ...extra] = positional;
+
+  if (extra.length > 0) {
+    emitImportFailure(json, {
+      schemaVersion: 1,
+      command: 'import',
+      source: 'mermaid-flowchart',
+      ok: false,
+      error: `Unexpected argument "${extra[0]}".`,
+      diagnostics: [diagnostic({
+        code: 'import/extra-argument',
+        message: `Unexpected argument "${extra[0]}".`,
+        subject: { argument: extra[0] },
+        evidence: { source: { argument: extra[0] } },
+        supportedFixes: ['use "archify import flowchart <input.mmd> [output.json] [--json]"'],
+      })],
+    });
+  }
+
+  if (!format) {
+    emitImportFailure(json, {
+      schemaVersion: 1,
+      command: 'import',
+      source: 'mermaid-flowchart',
+      ok: false,
+      error: 'Missing import format.',
+      diagnostics: [diagnostic({
+        code: 'import/missing-format',
+        message: 'Missing import format.',
+        subject: {},
+        evidence: { usage: 'archify import flowchart <input.mmd> [output.json] [--json]' },
+        supportedFixes: ['use "flowchart" as the import format'],
+      })],
+    });
+  }
+
+  if (format !== 'flowchart') {
+    emitImportFailure(json, {
+      schemaVersion: 1,
+      command: 'import',
+      source: 'mermaid-flowchart',
+      ok: false,
+      error: `Unsupported import format "${format}".`,
+      diagnostics: [diagnostic({
+        code: 'import/unsupported-format',
+        message: `Unsupported import format "${format}".`,
+        subject: { format },
+        evidence: { source: { format } },
+        supportedFixes: ['use "flowchart" as the import format'],
+      })],
+    });
+  }
+
+  if (!inputPath) {
+    emitImportFailure(json, {
+      schemaVersion: 1,
+      command: 'import',
+      source: 'mermaid-flowchart',
+      ok: false,
+      error: 'Missing input file.',
+      diagnostics: [diagnostic({
+        code: 'import/missing-input',
+        message: 'Missing input file.',
+        subject: {},
+        evidence: { usage: 'archify import flowchart <input.mmd> [output.json] [--json]' },
+        supportedFixes: ['provide a readable .mmd input file'],
+      })],
+    });
+  }
 
   let source;
   try {
