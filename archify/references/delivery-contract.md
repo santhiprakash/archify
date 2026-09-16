@@ -2,6 +2,15 @@
 
 ## Validate and deliver
 
+`render` and direct renderer entry points print classified authoring failures
+to stderr as readable diagnostics and exit 1. Input read/JSON parse failures
+use `input/read` or `input/json-parse`; output filesystem failures use
+`output/write` and identify the output path. Schema and layout failures keep
+their existing rule codes. Use the advertised `validate --json` or
+`deliver --json` interface for a machine receipt; `render` has no `--json` flag.
+Unexpected implementation failures retain debugging information in human
+mode and remain `internal/unclassified` in machine receipts.
+
 Use `validate` after every candidate edit. CLI HTML output paths must end in `.html`, including after symbolic-link resolution.
 Compare receipt paths must end in `.json`. Explicit CLI paths may be absolute or
 outside the current working directory; authored `meta.output` remains confined
@@ -63,7 +72,13 @@ The zero-dependency command uses Chrome/Chromium through the DevTools pipe. It
 measures light-theme containment at 1440×900, 1600×1000, 1920×1080, and
 2048×1320, then captures light/dark screenshots at 1440×900 and 2048×1320. It
 writes four PNG sidecars, one relative-path HTML contact sheet, and one JSON
-receipt beside the artifact. The receipt binds the source artifact SHA-256 and
+receipt beside the artifact by default — pass `--out-dir <dir>` to write all of
+them into a separate directory instead (created if missing) when a project
+keeps its testing/evidence artifacts apart from the delivered `.json`/`.html`
+result pair. When that directory differs from the artifact directory, the
+receipt records its absolute path as `sidecars.directory`; sidecar filenames
+resolve there, otherwise beside `artifact.path`. The contact sheet keeps its
+image links relative for portability. The receipt binds the source artifact SHA-256 and
 byte count, identifies `evidenceKind: "automated-browser"`, records READ plus
 Still runtime state, and always reports `visualReview: "pending"`; automated
 browser evidence cannot claim perceptual review.
@@ -136,3 +151,7 @@ correction_rounds: 0|1|2
 Derive `browser_evidence` only from the latest artifact-bound `visual-check` receipt. Record any manual browser work separately with its artifact binding, viewport/theme scope, and observations; never use it or `visual_review` to overwrite the automated status.
 
 Opening, preview status, Share Cards, and other viewer exports are not validation claims.
+
+## Multiple authored diagrams
+
+For an overview linked to separately authored details, see [layered reading](layered-reading.md). The atlas receipt covers composition and exact embedded child bytes; child `visual-check` results do not establish atlas browser acceptance.
