@@ -100,6 +100,56 @@ function validateLabelText(text, lineNo, startColumn, { code, kind, context }) {
   return null;
 }
 
+// --- Layout helpers ------------------------------------------------------
+
+// The architecture renderer measures connection labels with this width so the
+// SVG text mask, auto canvas, and layout reports agree. Keep the importer in
+// sync so it can pre-position labels that would otherwise clip the left edge.
+function connectionLabelWidth(label) {
+  return Math.max(30, textUnits(label) * 4.8 + 10);
+}
+
+function portCenter(pos, side) {
+  const [x, y] = pos.pos;
+  const [w, h] = pos.size;
+  if (side === 'left') return [x, y + h / 2];
+  if (side === 'right') return [x + w, y + h / 2];
+  if (side === 'top') return [x + w / 2, y];
+  if (side === 'bottom') return [x + w / 2, y + h];
+  return [x + w / 2, y + h / 2];
+}
+
+function defaultEndpointSides(fromPos, toPos, isHorizontal) {
+  if (isHorizontal) {
+    return fromPos.pos[0] < toPos.pos[0]
+      ? { fromSide: 'right', toSide: 'left' }
+      : { fromSide: 'left', toSide: 'right' };
+  }
+  return fromPos.pos[1] < toPos.pos[1]
+    ? { fromSide: 'bottom', toSide: 'top' }
+    : { fromSide: 'top', toSide: 'bottom' };
+}
+
+// The architecture viewBox is anchored at (0, 0) and only expands to the right
+// and bottom. A connection label whose measured rect would start before x = 0
+// therefore fails the label-canvas-containment check. Pre-position such labels
+// with an explicit labelAt so their left edge stays inside the canvas; the auto
+// viewBox will expand right to contain the remainder of the label.
+function safeLabelAt(label, fromPos, toPos, isHorizontal, labelDy) {
+  const { fromSide, toSide } = defaultEndpointSides(fromPos, toPos, isHorizontal);
+  const start = portCenter(fromPos, fromSide);
+  const end = portCenter(toPos, toSide);
+  const midX = (start[0] + end[0]) / 2;
+  const width = connectionLabelWidth(label);
+  const leftEdge = midX - width / 2;
+  if (leftEdge >= 0) return null;
+  const sourcePortY = start[1];
+  const ly = sourcePortY - 10 + (labelDy || 0);
+  // Shift the label center right until the left edge has a 2px safety margin.
+  const safeX = width / 2 + 2;
+  return [Math.round(safeX), Math.round(ly)];
+}
+
 // --- Parser --------------------------------------------------------------
 
 /**
@@ -442,6 +492,8 @@ export function parseFlowchart(source) {
       };
       if (c.label) {
         conn.label = c.label;
+        const fromPos = positions.get(c.from);
+        const toPos = positions.get(c.to);
         // The Viewer anchors straight-route labels at the source port's y
         // minus 10, so a vertical label shifts half a cell toward the target
         // side of the gap to reach the route midpoint (mirrored for BT).
@@ -450,23 +502,26 @@ export function parseFlowchart(source) {
         // layout validation.
         if (!isHorizontal) {
           conn.labelDy = mirrored ? -(LAYOUT.GAP_Y / 2 + 10) : LAYOUT.GAP_Y / 2 + 10;
-        } else {
+        } else if (fromPos && toPos && fromPos.pos[1] === toPos.pos[1]) {
           // A straight horizontal label wider than the gap between its
           // endpoint cells overlaps both components (label rect spans the
           // route midpoint). Move it below the route — half a cell plus label
           // height and margin clears the 60px row — so the import output can
           // pass the advertised validate handoff instead of failing it.
-          const fromPos = positions.get(c.from);
-          const toPos = positions.get(c.to);
-          if (fromPos && toPos && fromPos.pos[1] === toPos.pos[1]) {
-            const labelWidth = Math.ceil(textUnits(c.label) * 6.6);
-            const gap = toPos.pos[0] > fromPos.pos[0]
-              ? toPos.pos[0] - (fromPos.pos[0] + fromPos.size[0])
-              : fromPos.pos[0] - (toPos.pos[0] + toPos.size[0]);
-            if (labelWidth > gap) {
-              conn.labelDy = LAYOUT.CELL_H / 2 + 14 + 10;
-            }
+          const labelWidth = Math.ceil(textUnits(c.label) * 6.6);
+          const gap = toPos.pos[0] > fromPos.pos[0]
+            ? toPos.pos[0] - (fromPos.pos[0] + fromPos.size[0])
+            : fromPos.pos[0] - (toPos.pos[0] + toPos.size[0]);
+          if (labelWidth > gap) {
+            conn.labelDy = LAYOUT.CELL_H / 2 + 14 + 10;
           }
+        }
+        // Edge labels wider than the available left margin can clip the viewBox
+        // left edge because the auto canvas only expands right/bottom. Use an
+        // explicit labelAt when the default placement would overflow.
+        if (fromPos && toPos) {
+          const labelAt = safeLabelAt(c.label, fromPos, toPos, isHorizontal, conn.labelDy || 0);
+          if (labelAt) conn.labelAt = labelAt;
         }
       }
       if (c.variant && c.variant !== 'solid') conn.variant = c.variant;
