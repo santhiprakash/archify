@@ -158,6 +158,24 @@ jobs:
           Expand-Archive -Path archify.zip -DestinationPath $packageRoot
       - name: Validate packaged skill without installing dependencies
         run: node scripts/package-smoke.mjs
+      - name: Install delivery-lock test dependencies
+        if: runner.os != 'Linux'
+        run: npm ci --ignore-scripts
+        working-directory: archify
+      - name: Verify delivery-lock ownership with real subprocesses
+        if: runner.os != 'Linux'
+        run: >-
+          node --test
+          --test-name-pattern="cli: portable delivery lock:"
+          test/cli.test.mjs
+        working-directory: archify
+      - name: Verify macOS opener stays behind delivery-lock release
+        if: runner.os == 'macOS'
+        run: >-
+          node --test
+          --test-name-pattern="cli: lock release failure does not invoke the requested opener"
+          test/cli.test.mjs
+        working-directory: archify
 
   windows-test-portability:
     name: Windows test portability

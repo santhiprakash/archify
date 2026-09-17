@@ -75,8 +75,9 @@ for (const [type, { document, collection, points, d }] of Object.entries(cases))
       assertPassed(run('deliver', type, input, output, '--json'));
       assert.equal(fs.readFileSync(output, 'utf8'), html, 'delivery must retain the rendered geometry');
 
-      fs.writeFileSync(output, html.replace(' data-composition-route="straight"', ''));
-      const unmarked = run('check', output);
+      const unmarkedOutput = path.join(tmp, `${type}-${quality}-unmarked.html`);
+      fs.writeFileSync(unmarkedOutput, html.replace(' data-composition-route="straight"', ''));
+      const unmarked = run('check', unmarkedOutput);
       assert.equal(unmarked.status, 1);
       assert.equal(orthogonalCheck(unmarked).ok, false, 'same geometry without authored intent must still fail');
     });

@@ -197,7 +197,7 @@ Archify 不是通用绘图编辑器，也不是 Mermaid 主题；它负责把技
 | **生成** | Agent 根据描述创建 Typed JSON IR。 |
 | **校验** | 内置 Validator 和布局规则检查源文件；失败时用机器可读 JSON 指出准确的局部修复。 |
 | **预览（可选）** | 仅 loopback 的桌面会话监听一个源文件，只刷新验证版本；失败时保留最后好图。 |
-| **交付** | 在目标同目录生成并检查候选；只有通过门禁的结果才原子替换目标文件，随后可选用 `--open` 打开这个确切成品。 |
+| **交付** | 成品/凭据对只有在恢复日志完成收尾且交付锁释放后才成为当前版本；随后才可选用 `--open`。 |
 | **迭代** | Agent 修改源文件，不干扰无关结构。 |
 
 仓库常用命令：
@@ -214,7 +214,7 @@ node bin/archify.mjs deliver workflow examples/agent-tool-call.workflow.json /tm
 
 `preview` 是显式启用的桌面创作模式，不是默认后台服务：它只在随机端口监听 `127.0.0.1`，只观察指定 JSON，失败时保留上一份验证输出，并通过 Ctrl-C 停止。测试或准备手动打开打印出的本地 URL 时可加 `--no-open`。生成的 HTML 不会携带 Preview Runtime。
 
-`deliver --open` 适合一次性的本地交互交付。它默认关闭，并且只在验证成品原子提交后执行；系统无法打开时，交付仍保持成功，JSON 只写 stdout，stderr 会给出可手动打开的绝对路径。
+`deliver --open` 只在提交、恢复日志收尾和锁释放后执行。系统无法打开时，交付仍保持成功，JSON 只写 stdout，stderr 会给出可手动打开的绝对路径。
 
 失败时，`validate --json` 和 `deliver --json` 仍然只输出一个 JSON 对象。读取 `diagnostics[]`，只修改其中 `subject` 指向的对象，并使用 `supportedFixes` 列出的修复方式；不要整图重写，也不要突破 Skill 最多两轮的聚焦修复上限。确定性诊断仍不等于视觉复核。
 
@@ -272,7 +272,7 @@ Claude.ai 中的上传入口：
 
 - [Schema 说明](archify/schemas/README.md)
 - [Skill 与 Renderer 契约](archify/SKILL.md)
-- [示例](archify/examples/) · [分层阅读](archify/references/layered-reading.md)：离线总览与显式细节关联。
+- [示例](archify/examples/)
 - [Agent 编图手册](docs/authoring-cookbook.zh-CN.md) · [English](docs/authoring-cookbook.md)
 - [版本历史](CHANGELOG.md)
 - [路线图](ROADMAP.md)
