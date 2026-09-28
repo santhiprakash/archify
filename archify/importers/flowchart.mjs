@@ -475,6 +475,7 @@ export function parseFlowchart(source) {
     diagram_type: 'architecture',
     meta: {
       title: 'Imported Flowchart',
+      output: 'imported-flowchart.html',
     },
     components: componentArray.map((c) => {
       const obj = { id: c.id, type: c.type, label: c.label };

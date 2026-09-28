@@ -53,9 +53,10 @@ export function throwDiagnosticError(message, diagnostics) {
   throw error;
 }
 
-export function throwDiagnosticProblems(prefix, problems, { code = 'layout/constraint', subject = {} } = {}) {
+export function throwDiagnosticProblems(prefix, problems, { code = 'layout/constraint', subject = {}, diagnostics: details = [] } = {}) {
   const messages = (problems || []).map((problem) => String(problem));
-  const diagnostics = messages.map((message) => normalizedDiagnostic({
+  const byMessage = new Map(details.map((entry) => [entry.message, entry]));
+  const diagnostics = messages.map((message) => normalizedDiagnostic(byMessage.get(message) || {
       code,
       severity: 'error',
       message,
@@ -77,7 +78,7 @@ function fallbackDiagnostic(error) {
     supportedFixes: [],
   });
 }
-function rendererFailure(error) {
+export function rendererFailure(error) {
   const attached = Array.isArray(error?.archifyDiagnostics)
     ? error.archifyDiagnostics.map(normalizedDiagnostic)
     : [];

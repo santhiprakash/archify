@@ -39,7 +39,9 @@ function load(mode) {
 function render(mode, doc) {
   const input = path.join(tmp, `${mode}-${Math.abs(hash(JSON.stringify(doc)))}.json`);
   const outPath = path.join(tmp, `${mode}-${Math.abs(hash(JSON.stringify(doc)))}.html`);
-  fs.writeFileSync(input, JSON.stringify(doc));
+  const renderDoc = structuredClone(doc);
+  renderDoc.meta = { ...renderDoc.meta, output: `${mode}-layout-rules.html` };
+  fs.writeFileSync(input, JSON.stringify(renderDoc));
   try {
     execFileSync('node', [
       path.join(skillRoot, `renderers/${mode}/render-${mode}.mjs`),
@@ -54,7 +56,9 @@ function render(mode, doc) {
 
 function validateCli(mode, doc, quality = 'showcase') {
   const input = path.join(tmp, `${mode}-cli-${Math.abs(hash(JSON.stringify(doc)))}.json`);
-  fs.writeFileSync(input, JSON.stringify(doc));
+  const cliDoc = structuredClone(doc);
+  cliDoc.meta = { ...cliDoc.meta, output: `${mode}-validation.html` };
+  fs.writeFileSync(input, JSON.stringify(cliDoc));
   try {
     const stdout = execFileSync('node', [
       path.join(skillRoot, 'bin', 'archify.mjs'),
@@ -77,7 +81,9 @@ function validateCli(mode, doc, quality = 'showcase') {
 function deliverCli(mode, doc, quality = 'showcase') {
   const input = path.join(tmp, `${mode}-deliver-${Math.abs(hash(JSON.stringify(doc)))}.json`);
   const outPath = path.join(tmp, `${mode}-deliver-${Math.abs(hash(JSON.stringify(doc)))}.html`);
-  fs.writeFileSync(input, JSON.stringify(doc));
+  const cliDoc = structuredClone(doc);
+  cliDoc.meta = { ...cliDoc.meta, output: `${mode}-delivery.html` };
+  fs.writeFileSync(input, JSON.stringify(cliDoc));
   try {
     const stdout = execFileSync('node', [
       path.join(skillRoot, 'bin', 'archify.mjs'),
@@ -359,6 +365,60 @@ for (const [name, mode, mutate, expected] of CASES) {
     }
   });
 }
+
+test('workflow: same-lane nodes the solver separated by exactly 8px keep passing (#583)', () => {
+  // Redacted reproduction from #583: the neighbour constraint puts column
+  // centers at 873.6 and 1041.6, a 167.9999999999999 distance the check re-derives
+  // from the nodes' left edges as 1.14e-13px past a5. The compiler rejected the
+  // layout it had just produced, with an empty supportedFixes list.
+  const doc = {
+    schema_version: 2,
+    diagram_type: 'workflow',
+    meta: { title: 'Clearance rounding', quality_profile: 'showcase' },
+    lanes: [
+      { id: 'upper', label: 'Upper: the first lane' },
+      { id: 'lower', label: 'Lower lane: second lane' },
+    ],
+    nodes: [
+      { id: 's0', lane: 'lower', col: 0, type: 'backend', label: 'Start', width: 160 },
+      { id: 'a1', lane: 'upper', col: 1, type: 'backend', label: 'Step one', width: 160 },
+      { id: 'a2', lane: 'upper', col: 2, type: 'backend', label: 'Step two', width: 160 },
+      { id: 'a3', lane: 'upper', col: 3, type: 'backend', label: 'Step three', width: 160 },
+      { id: 'a4', lane: 'upper', col: 4, type: 'backend', label: 'Step four', width: 160 },
+      { id: 'a5', lane: 'upper', col: 5, type: 'backend', label: 'Step five', width: 160 },
+    ],
+    edges: [
+      { id: 's0-a1', from: 's0', to: 'a1', fromSide: 'top', toSide: 'left' },
+      { id: 'a3-a4', from: 'a3', to: 'a4' },
+    ],
+  };
+
+  const { code, result } = validateCli('workflow', doc);
+  assert.equal(code, 0, JSON.stringify(result, null, 2));
+  assert.equal(result.ok, true, JSON.stringify(result.diagnostics, null, 2));
+
+  // The painted pair must sit on the minimum, not comfortably clear of it, or
+  // this regression would pass with the tolerance set to anything.
+  const rendered = render('workflow', doc);
+  assert.equal(rendered.code, 0, rendered.stderr);
+  const html = fs.readFileSync(rendered.outPath, 'utf8');
+  const left = workflowNodeRect(html, 'a4');
+  const right = workflowNodeRect(html, 'a5');
+  const paintedGap = right.x - (left.x + left.width);
+  assert.ok(
+    Math.abs(paintedGap - 8) < 1e-6,
+    `expected a4 and a5 to paint 8px apart, measured ${paintedGap}`,
+  );
+
+  const overlapping = JSON.parse(JSON.stringify(doc));
+  overlapping.nodes[5].col = 4;
+  const { result: overlapResult } = validateCli('workflow', overlapping);
+  assert.equal(overlapResult.ok, false, JSON.stringify(overlapResult, null, 2));
+  assert.ok(
+    overlapResult.diagnostics.some((diagnostic) => diagnostic.code === 'workflow/node-overlap'),
+    JSON.stringify(overlapResult.diagnostics, null, 2),
+  );
+});
 
 test('architecture: ordinary boundaries may express orthogonal overlapping memberships', () => {
   const d = load('architecture');
@@ -1256,7 +1316,7 @@ test('sequence: showcase rejects a message label that leaves the canvas', () => 
   const { code, stderr } = render('sequence', d);
   assert.notEqual(code, 0, `expected non-zero exit; stderr:\n${stderr}`);
   assert.match(stderr, /\[composition\/label-canvas-containment\] showcase sequence label ".*" on messages\[0\]/);
-  assert.match(stderr, /extends past the left edge by 99\.2px .*viewBox 1080x560/);
+  assert.match(stderr, /extends past the left edge by 99\.2px .*viewBox 1080x580/);
   assert.match(stderr, /shorten the label, reorder participants, or enlarge meta\.viewBox/);
 });
 
@@ -1294,6 +1354,65 @@ test('architecture: an auto viewBox grows to contain a wide connection label', (
   assert.notEqual(pinned.code, 0, `expected non-zero exit; stderr:\n${pinned.stderr}`);
   assert.match(pinned.stderr, /\[composition\/label-canvas-containment\]/);
 });
+
+test('architecture: measured auto canvases opt into height-aware reader fitting', () => {
+  const automatic = load('architecture');
+  delete automatic.meta.viewBox;
+  const rendered = render('architecture', automatic);
+  assert.equal(rendered.code, 0, rendered.stderr);
+  const automaticSvg = fs.readFileSync(rendered.outPath, 'utf8').match(/<svg\b[^>]*>/)?.[0];
+  assert.ok(automaticSvg, 'expected an SVG root for the automatic canvas');
+  assert.match(automaticSvg, /data-reader-fit="intrinsic-height"/);
+  assert.match(automaticSvg, /data-reader-min-text="7\.5"/);
+
+  const authored = structuredClone(automatic);
+  authored.meta.viewBox = [1080, 620];
+  const pinned = render('architecture', authored);
+  assert.equal(pinned.code, 0, pinned.stderr);
+  const authoredSvg = fs.readFileSync(pinned.outPath, 'utf8').match(/<svg\b[^>]*>/)?.[0];
+  assert.ok(authoredSvg, 'expected an SVG root for the authored canvas');
+  assert.match(authoredSvg, /data-reader-fit="authored-height"/);
+  assert.match(authoredSvg, /data-diagram-type="architecture"/);
+  assert.doesNotMatch(authoredSvg, /data-reader-min-text=/);
+});
+
+// Sequence and dataflow share the lifecycle/architecture contract: the default
+// canvas is below the wide ratio, so omitting meta.viewBox must declare the
+// intrinsic-height fit or every default canvas certainly overflows 1440x900.
+for (const [mode, doc, authoredViewBox] of [
+  ['sequence', {
+    schema_version: 1, diagram_type: 'sequence',
+    meta: { title: 'Ping', output: 'seq.html' },
+    participants: [{ id: 'a', type: 'external', label: 'Client' }, { id: 'b', type: 'backend', label: 'Server' }],
+    messages: [{ from: 'a', to: 'b', y: 160, label: 'ping' }],
+  }, [1080, 560]],
+  ['dataflow', {
+    schema_version: 1, diagram_type: 'dataflow',
+    meta: { title: 'Pipe', output: 'df.html' },
+    stages: [{ label: 'In' }, { label: 'Out' }],
+    nodes: [
+      { id: 'a', type: 'frontend', label: 'Client', stage: 0, row: 0 },
+      { id: 'b', type: 'database', label: 'Store', stage: 1, row: 0 },
+    ],
+    flows: [{ from: 'a', to: 'b', label: 'write' }],
+  }, [1080, 520]],
+]) {
+  test(`${mode}: default canvas declares intrinsic-height fit, authored viewBox does not`, () => {
+    const automatic = render(mode, doc);
+    assert.equal(automatic.code, 0, automatic.stderr);
+    const automaticSvg = fs.readFileSync(automatic.outPath, 'utf8').match(/<svg\b[^>]*>/)?.[0];
+    assert.ok(automaticSvg, `expected an SVG root for the default ${mode} canvas`);
+    assert.match(automaticSvg, /data-reader-fit="intrinsic-height"/);
+
+    const authored = structuredClone(doc);
+    authored.meta.viewBox = authoredViewBox;
+    const pinned = render(mode, authored);
+    assert.equal(pinned.code, 0, pinned.stderr);
+    const authoredSvg = fs.readFileSync(pinned.outPath, 'utf8').match(/<svg\b[^>]*>/)?.[0];
+    assert.ok(authoredSvg, `expected an SVG root for the authored ${mode} canvas`);
+    assert.doesNotMatch(authoredSvg, /data-reader-fit=/);
+  });
+}
 
 // Boundary-title fonts are resolved against the same width the canvas actually
 // renders into. When a connection label alone widens the auto canvas past the
@@ -1410,8 +1529,13 @@ function suggestedLabelFixes(stderr) {
   return [...unique];
 }
 
+test('architecture: an automatic label clears its source and authored canvas edge without manual controls', () => {
+  const { code, stderr } = render('architecture', pinnedLabelDocument({}));
+  assert.equal(code, 0, stderr);
+});
+
 for (const [name, labelControls, expectedFixes] of [
-  ['no authored label controls', {}, 4],
+  ['an authored zero labelDy', { labelDy: 0 }, 4],
   ['an authored labelDx', { labelDx: 120 }, 4],
   ['an authored labelAt', { labelAt: [660, 104] }, 2],
 ]) {
@@ -1459,6 +1583,26 @@ test('architecture: default auto route selects a safe orthogonal candidate aroun
   assert.match(html, /data-composition-points="560,318;856,318;856,160;880,160"/);
 });
 
+test('architecture: aligned automatic endpoints still route around an unrelated component', () => {
+  const d = {
+    schema_version: 1,
+    diagram_type: 'architecture',
+    meta: { title: 'Aligned obstacle regression', quality_profile: 'showcase' },
+    components: [
+      { id: 'source', type: 'backend', label: 'Source', pos: [40, 120], size: [140, 60] },
+      { id: 'blocker', type: 'security', label: 'Blocker', pos: [240, 120], size: [140, 60] },
+      { id: 'target', type: 'database', label: 'Target', pos: [440, 120], size: [140, 60] },
+    ],
+    connections: [{ id: 'source-target', from: 'source', to: 'target' }],
+  };
+  const { code, stderr, outPath } = render('architecture', d);
+  assert.equal(code, 0, `aligned automatic route must avoid the blocker: ${stderr}`);
+  const html = fs.readFileSync(outPath, 'utf8');
+  const encoded = html.match(/data-edge-id="source-target" data-composition-points="([^"]+)"/)?.[1];
+  assert.ok(encoded, 'expected rendered composition points for source-target');
+  assert.ok(encoded.split(';').length >= 6, `expected obstacle-avoiding bends, found ${encoded}`);
+});
+
 test('architecture: auto route enters explicit top and bottom ports perpendicularly', () => {
   const d = {
     schema_version: 1,
@@ -1498,6 +1642,34 @@ test('architecture: auto route preserves inferred side normals when the primary 
   const html = fs.readFileSync(outPath, 'utf8');
   assert.match(html, /data-composition-points="700,130;184,130;184,330;160,330"/);
   assert.doesNotMatch(html, /data-composition-points="700,130;700,230;160,230;160,330"/);
+});
+
+test('architecture: auto route finds a multi-bend path when both side-safe doglegs are blocked', () => {
+  const d = {
+    schema_version: 1,
+    diagram_type: 'architecture',
+    meta: { title: 'Multi-bend automatic route regression', quality_profile: 'showcase' },
+    components: [
+      { id: 'server', type: 'backend', label: 'Server', pos: [280, 240], size: [180, 64] },
+      { id: 'upper-blocker', type: 'backend', label: 'Upper blocker', pos: [530, 240], size: [180, 64] },
+      { id: 'lower-blocker', type: 'backend', label: 'Lower blocker', pos: [530, 360], size: [180, 64] },
+      { id: 'client', type: 'external', label: 'Client', pos: [780, 360], size: [190, 64] },
+    ],
+    connections: [
+      { id: 'client-server', from: 'client', to: 'server' },
+    ],
+  };
+  const { code, stderr, outPath } = render('architecture', d);
+  assert.equal(code, 0, `automatic multi-bend route must render cleanly: ${stderr}`);
+  const html = fs.readFileSync(outPath, 'utf8');
+  const encoded = html.match(/data-edge-id="client-server" data-composition-points="([^"]+)"/)?.[1];
+  assert.ok(encoded, 'expected rendered composition points for client-server');
+  const points = encoded.split(';').map((point) => point.split(',').map(Number));
+  assert.ok(points.length >= 6, `expected a multi-bend route, found ${encoded}`);
+  assert.equal(points[0][1], points[1][1], 'route must leave the inferred left port horizontally');
+  assert.ok(points[1][0] < points[0][0], 'route must leave the inferred left port leftward');
+  assert.equal(points.at(-2)[1], points.at(-1)[1], 'route must enter the inferred right port horizontally');
+  assert.ok(points.at(-2)[0] > points.at(-1)[0], 'route must enter the inferred right port leftward');
 });
 
 test('architecture: explicit via cannot run tangentially into an authored top port', () => {
@@ -1540,12 +1712,23 @@ test('architecture: explicit orthogonal route remains authoritative when it cros
   assert.match(stderr, /connections\[0\] "api" -> "queue" crosses component "cache"/);
 });
 
-test('architecture: auto route still fails closed when doglegs and side-aware bridges are blocked', () => {
-  const d = autoRoutePassThroughDocument({ from: 'api', to: 'queue', variant: 'dashed' });
+test('architecture: auto route clears stacked blockers after doglegs and side-aware bridges are blocked', () => {
+  const d = autoRoutePassThroughDocument({ id: 'api-queue', from: 'api', to: 'queue', variant: 'dashed' });
   d.components.push({ id: 'guard', type: 'security', label: 'Guard', pos: [825, 215], size: [70, 50] });
-  const { code, stderr } = render('architecture', d);
-  assert.notEqual(code, 0, `expected non-zero exit; stderr:\n${stderr}`);
-  assert.match(stderr, /connections\[0\] "api" -> "queue" crosses component "cache"/);
+  const { code, stderr, outPath } = render('architecture', d);
+  assert.equal(code, 0, `automatic multi-bend route must clear both blockers: ${stderr}`);
+  const html = fs.readFileSync(outPath, 'utf8');
+  const encoded = html.match(/data-edge-id="api-queue" data-composition-points="([^"]+)"/)?.[1];
+  assert.ok(encoded, 'expected rendered composition points for api-queue');
+  const points = encoded.split(';').map((point) => point.split(',').map(Number));
+  // The bend-penalised planner takes the 50px gap between the two blockers in
+  // two turns; the pure shortest path used to staircase around them.
+  assert.ok(points.length >= 4, `expected a routed detour, found ${encoded}`);
+  assert.ok(points.slice(1, -1).some(([x]) => x > 775 && x < 825), `route must pass between the blockers, found ${encoded}`);
+  assert.equal(points[0][1], points[1][1], 'route must leave the inferred right port horizontally');
+  assert.ok(points[1][0] > points[0][0], 'route must leave the inferred right port rightward');
+  assert.equal(points.at(-2)[1], points.at(-1)[1], 'route must enter the inferred left port horizontally');
+  assert.ok(points.at(-2)[0] < points.at(-1)[0], 'route must enter the inferred left port rightward');
 });
 
 test('architecture: explicit waypoints around an obstacle remain valid by default', () => {
@@ -1585,6 +1768,41 @@ test('architecture: showcase rejects an unrelated proper edge crossing', () => {
   assert.match(stderr, /at \[240, 190\]/);
   assert.match(stderr, /segments 1 and 1/);
   assert.match(stderr, /route\/via|fromSide\/toSide/);
+});
+
+test('architecture: unavoidable automatic crossing renders as a verified crossover', () => {
+  const d = {
+    schema_version: 1,
+    diagram_type: 'architecture',
+    meta: { title: 'Automatic crossover', quality_profile: 'showcase' },
+    components: [
+      { id: 'left', type: 'frontend', label: 'Left', pos: [40, 170], size: [80, 60] },
+      { id: 'right', type: 'backend', label: 'Right', pos: [480, 170], size: [80, 60] },
+      { id: 'top', type: 'database', label: 'Top', pos: [260, 20], size: [80, 60] },
+      { id: 'bottom', type: 'external', label: 'Bottom', pos: [260, 320], size: [80, 60] },
+    ],
+    connections: [
+      { id: 'horizontal', from: 'left', to: 'right', fromSide: 'right', toSide: 'left' },
+      { id: 'vertical', from: 'top', to: 'bottom', fromSide: 'bottom', toSide: 'top' },
+    ],
+  };
+  const { code, stderr, outPath } = render('architecture', d);
+  assert.equal(code, 0, stderr);
+  const html = fs.readFileSync(outPath, 'utf8');
+  const svg = html.match(/<svg\b[\s\S]*?<\/svg>/i)?.[0] || '';
+  assert.equal((svg.match(/data-graph-role="automatic-crossover-underlay"/g) || []).length, 2);
+  assert.equal((svg.match(/data-graph-role="automatic-crossover"/g) || []).length, 2);
+  assert.equal((svg.match(/data-composition-crossover="halo"/g) || []).length, 2);
+  assert.equal((svg.match(/data-edge-from=/g) || []).length, 2);
+  assert.doesNotMatch(svg, /automatic-crossover-underlay"[^>]*data-edge-/);
+
+  const receipt = JSON.parse(execFileSync('node', [
+    path.join(skillRoot, 'scripts', 'check-render-output.mjs'),
+    outPath,
+  ], { encoding: 'utf8' }));
+  assert.equal(receipt.ok, true, JSON.stringify(receipt.composition.issues));
+  assert.equal(receipt.composition.metrics.properCrossings, 0);
+  assert.equal(receipt.composition.metrics.resolvedCrossovers, 1);
 });
 
 test('architecture: showcase preserves a straight-through explicit waypoint as an authored touch', () => {
@@ -1689,6 +1907,51 @@ test('architecture: route rhythm warns in standard and blocks a showcase micro s
   assert.match(stderr, /\[composition\/micro-segment\] showcase architecture connections\[0\] id "tight"/);
   assert.match(stderr, /5px source-stub segment 0/);
   assert.match(stderr, /wider corridor|move the component/);
+});
+
+test('architecture: automatic reciprocal adjacent routes keep the showcase interior floor', () => {
+  const doc = {
+    schema_version: 1,
+    diagram_type: 'architecture',
+    meta: { title: 'Automatic adjacent request and response', quality_profile: 'showcase' },
+    components: [
+      { id: 'listener', type: 'backend', label: 'Node HTTP listener', pos: [260, 270], size: [170, 78] },
+      { id: 'handler', type: 'backend', label: 'HTTP request handler', pos: [490, 270], size: [180, 84] },
+    ],
+    connections: [
+      { id: 'request-envelope', from: 'listener', to: 'handler', label: 'method · path · body' },
+      { id: 'json-response', from: 'handler', to: 'listener', label: '401 / 400 / 404 / 409 / 202 / 200' },
+    ],
+  };
+  assert.ok(doc.connections.every((connection) => (
+    !('route' in connection) && !('via' in connection) && !('fromSide' in connection) && !('toSide' in connection)
+  )));
+
+  // The route remains valid, but these full labels do not fit a 60px gap.
+  // Inspect geometry even on failure instead of accepting detached labels.
+  const input = path.join(tmp, 'reciprocal-label-gap.json');
+  fs.writeFileSync(input, JSON.stringify({ ...doc, meta: { ...doc.meta, output: 'reciprocal.html' } }));
+  let report;
+  try {
+    execFileSync('node', [path.join(skillRoot, 'bin/archify.mjs'), 'validate', 'architecture', input, '--layout-json'], { encoding: 'utf8' });
+    assert.fail('crowded labels must be rejected');
+  } catch (error) {
+    assert.equal(error.status, 1);
+    report = JSON.parse(error.stdout);
+  }
+  assert.ok(report.diagnostics.length > 0);
+  assert.ok(report.diagnostics.every(issue => issue.code === 'composition/label-gap'
+    || issue.code === 'composition/label-route-clearance'
+    || /^Label ".*" overlaps component /.test(issue.message)), JSON.stringify(report.diagnostics));
+  for (const [index, { id }] of doc.connections.entries()) {
+    const points = report.connections[index]?.points;
+    assert.ok(points, `expected composition points for ${id}`);
+    const encoded = JSON.stringify(points);
+    const interiorLengths = points.slice(1, -2).map((point, index) => (
+      Math.abs(point[0] - points[index + 2][0]) + Math.abs(point[1] - points[index + 2][1])
+    ));
+    assert.ok(interiorLengths.every((length) => length >= 16), `${id} has cramped interior: ${encoded}`);
+  }
 });
 
 test('architecture: container border run is blocking in standard and showcase', () => {

@@ -10,6 +10,12 @@ The pending **v0.2.0** release is prepared for experimental compatibility with d
 
 The adapter registers no native render/validate/deliver tools, custom Web client, Produced Files chips, telemetry, credentials handling, background services, or install hooks. The pending v0.2.0 Skill includes an optional, notification-only stable Archify update checker; it never upgrades the plugin. Authored remote brand assets may also use the Skill's bounded network path. The adapter itself makes no network requests.
 
+## Patch execution boundary
+
+The `cordis.patch.yml` file is configuration consumed by the DSH host. Its `bundledSkillDir` value uses the host loader's `!!js` expression to resolve the installed package's `skills` directory when the entry is activated. This expression runs in the DSH host process, outside the agent sandbox; it is not an inert YAML value and should be treated as host-loaded code.
+
+The current expression is intentionally limited to Node's built-in `path` and `module` helpers for package resolution. It does not fetch data, read credentials, spawn processes, or register another permission path. The normal `lib/index.js` resolver documents the same package-root logic, but the filesystem provider is mounted directly by the patch, so that module is not the activation hook for this bundle. Keep the published install exact-pinned and review any patch change as host-process code.
+
 ## Install
 
 Use the prebuilt npm package with an exact version. Do not install from Git source.
@@ -23,6 +29,10 @@ dsh plugin --profile web add @tt-a1i/archify-dsh@0.1.0
 Run the same exact-version install command above in each profile that uses Archify. Updating DSH itself or the Archify repository does not update an already installed plugin.
 
 Do **not** use `dsh plugin add tt-a1i/archify`: the repository root is not a DSH package and has no bundle metadata (see [#341](https://github.com/tt-a1i/archify/issues/341)). For an npm download problem, a locally downloaded, integrity-verified `.tgz` can be passed to `dsh plugin --profile web add /absolute/path/to/package.tgz`.
+
+## Host activation configuration
+
+The bundle's `cordis.patch.yml` contains a `!!js` expression that DSH evaluates during host activation. Its current purpose is limited to resolving the installed `@tt-a1i/archify-dsh` package from the profile `baseUrl` and locating its packaged `skills` directory. The expression does not itself make network requests or handle credentials, but it is evaluated host-process code rather than entirely declarative data. Review the patch when upgrading, and keep the exact-version install guidance above.
 
 ## Release maintenance
 

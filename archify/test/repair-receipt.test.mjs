@@ -20,6 +20,7 @@ function run(args) {
 
 function writeFixture(name, source) {
   const file = path.join(tmp, name);
+  if (source?.meta && source.meta.output === undefined) source.meta.output = 'fixture.html';
   fs.writeFileSync(file, JSON.stringify(source, null, 2));
   return file;
 }
@@ -175,7 +176,10 @@ test('repair receipt: public validate reports borderline desktop readability wit
   assert.ok(repair);
   assert.deepEqual(repair.subject, { check: 'composition', nodeId: 'tool-runtime' });
   assert.ok(repair.evidence.projectedFontPx < repair.evidence.minimumProjectedFontPx);
-  assert.ok(repair.supportedFixes.some((fix) => fix.includes('reduce the viewBox width')));
+  const fix = repair.supportedFixes.join(' ');
+  assert.match(fix, /complete viewBox width is at most \d+px/);
+  assert.match(fix, /desktop budget/);
+  assert.doesNotMatch(fix, /labelAt|labelDx|labelDy|labelSegment/);
 });
 
 process.on('exit', () => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -207,4 +211,31 @@ test('repair receipt: readability identifies the failing node despite repeated c
       assert.equal(fs.existsSync(output), false);
     }
   }
+});
+
+test('repair receipt: edge readability advises a projection-changing reflow, not label positioning', () => {
+  const input = writeFixture('edge-readability.architecture.json', {
+    schema_version: 1,
+    diagram_type: 'architecture',
+    meta: { title: 'Edge readability', quality_profile: 'showcase', viewBox: [1438, 800] },
+    components: [
+      { id: 'listener', type: 'backend', label: 'Listener', pos: [120, 260], size: [180, 80] },
+      { id: 'handler', type: 'backend', label: 'Handler', pos: [760, 260], size: [180, 80] },
+    ],
+    connections: [{ id: 'request', from: 'listener', to: 'handler', label: 'method path body' }],
+  });
+  const result = run(['validate', 'architecture', input, '--quality', 'showcase', '--json']);
+  assert.equal(result.status, 1, result.stderr || result.stdout);
+  const repair = receipt(result).diagnostics.find((entry) => entry.code === 'composition/desktop-readability');
+  assert.ok(repair);
+  assert.equal(repair.evidence.owner.kind, 'edge');
+  assert.equal(repair.evidence.owner.id, 'request');
+  assert.equal(repair.evidence.sourceFontPx, 8);
+  assert.equal(repair.evidence.availableDiagramWidth, 930);
+  assert.equal(repair.evidence.viewBoxWidth, 1438);
+  const fix = repair.supportedFixes.join(' ');
+  assert.match(fix, /complete viewBox width is at most 1240px/);
+  assert.match(fix, /8px source text at 930px desktop budget/);
+  assert.match(fix, /Preserve the semantic text and any supplied coordinates, routes, sides, channels, and labels/);
+  assert.doesNotMatch(fix, /labelAt|labelDx|labelDy|labelSegment|reposition/i);
 });

@@ -14,7 +14,9 @@ function renderOutcome(doc) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'archify-column-fit-'));
   const input = path.join(tmp, 'input.json');
   const output = path.join(tmp, 'output.html');
-  fs.writeFileSync(input, JSON.stringify(doc));
+  const renderDoc = structuredClone(doc);
+  renderDoc.meta = { ...renderDoc.meta, output: 'sequence-column-fit.html' };
+  fs.writeFileSync(input, JSON.stringify(renderDoc));
   try {
     execFileSync('node', [
       path.join(skillRoot, 'renderers/sequence/render-sequence.mjs'),
@@ -126,12 +128,12 @@ test('the sublabel diagnostic reports the width in force, not the historical con
 test('the fast authoring path explains when to opt into spread', () => {
   const schema = JSON.parse(fs.readFileSync(path.join(skillRoot, 'schemas/sequence.schema.json'), 'utf8'));
   const description = schema.properties.meta.properties.column_fit.description;
-  const skill = fs.readFileSync(path.join(skillRoot, 'SKILL.md'), 'utf8');
+  const skill = fs.readFileSync(path.join(skillRoot, 'references/authoring-defaults.md'), 'utf8');
   const rendererReadme = fs.readFileSync(path.join(skillRoot, 'renderers/sequence/README.md'), 'utf8');
 
   assert.match(description, /wide viewBox/);
   assert.match(description, /meaningful participant labels/);
-  assert.match(skill, /do not shorten semantic labels before trying `spread`/);
+  assert.match(skill, /use `spread` when a wide viewBox leaves unused horizontal space or meaningful labels need width/);
   assert.match(rendererReadme, /Use `"spread"` when a wide/);
   assert.match(rendererReadme, /try `meta\.column_fit: "spread"` before shortening/);
 });
