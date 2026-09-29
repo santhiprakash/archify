@@ -4,6 +4,11 @@ All notable changes are documented here. Format loosely follows [Keep a Changelo
 
 ## [Unreleased]
 
+## [3.0.1] — 2026-09-28
+
+### Changed
+- **Update reminders at final delivery.** `finalize` and standalone `deliver` now carry a bounded stable-release check in human output and full/compact receipts. A known newer release appears once in each task's final response until the user upgrades or explicitly snoozes it for seven days or ignores that exact release. The old acknowledgement command remains a no-op, so it cannot silently hide an update. The checker reuses the fixed official manifest, validated cache, and path protections; slow or offline checks never block diagram delivery. No automatic installation or diagram-output change is introduced.
+
 ## [3.0.0] — 2026-09-28
 
 ### Upgrading from 2.x

@@ -2,17 +2,17 @@
   "schemaVersion": 1,
   "skillId": "archify",
   "channel": "stable",
-  "version": "3.0.0",
-  "publishedAt": "2026-09-28T11:13:16Z",
+  "version": "3.0.1",
+  "publishedAt": "2026-09-28T15:16:27Z",
   "source": {
     "repository": "https://github.com/tt-a1i/archify",
-    "ref": "v3.0.0",
-    "treeSha": "f581ddf0a84bb59497b49d2ebf4d002366d111b9"
+    "ref": "v3.0.1",
+    "treeSha": "7dcd73a73672d5da4f85d4c612017b478547303b"
   },
   "artifact": {
-    "sha256": "e30f65ddab8bbb0c467fa4be5bccf7e3853bd3ee86e8338f31e102037496be18"
+    "sha256": "b0b23bd28db314f04ca8ab9620fe20f8c1ac6474a3546bd8fe4679508aa1b7f5"
   },
-  "summary": "Redesigns the diagram reader, improves routing and Lifecycle v2, fixes Sequence legends and canvas use, and strengthens verified delivery.",
-  "releaseNotes": "https://github.com/tt-a1i/archify/releases/tag/v3.0.0",
+  "summary": "Makes verified stable update reminders part of normal diagram delivery, with repeat notices and explicit snooze or ignore controls.",
+  "releaseNotes": "https://github.com/tt-a1i/archify/releases/tag/v3.0.1",
   "severity": "normal"
 }
