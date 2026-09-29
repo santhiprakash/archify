@@ -449,14 +449,14 @@ export function resolveOutputPath({
  * at the output path itself — and rename(2) replaces a symlink instead of
  * following it, so no swap between the preflight and the commit can make this
  * write reach the Mermaid source through a symlink. The alias recheck at the
- * commit point reports the same `input/output-alias` condition as the
+ * commit point reports the same `output/input-alias` condition as the
  * preflight instead of silently replacing a symlink that now resolves to the
  * input.
  *
  * @param {string} inputPath
  * @param {string} outputPath
  * @param {string} data
- * @returns {{ ok: true } | { ok: false, reason: 'input/output-alias' }}
+ * @returns {{ ok: true } | { ok: false, reason: 'output/input-alias' }}
  * @throws {OutputPathError} when an output path on a symbolic-link cycle
  *   cannot be proven non-aliasing (`output/symlink-cycle`; the caller maps
  *   `archifyDiagnostics` into its receipt).
@@ -470,7 +470,7 @@ export function commitImportOutput(inputPath, outputPath, data) {
   // and future-path aliases. A symbolic-link cycle is not provably
   // non-aliasing, so pathsAlias throws instead of returning false.
   if (pathsAlias(inputPath, outputPath)) {
-    return { ok: false, reason: 'input/output-alias' };
+    return { ok: false, reason: 'output/input-alias' };
   }
   const resolved = path.resolve(outputPath);
   const candidate = path.join(

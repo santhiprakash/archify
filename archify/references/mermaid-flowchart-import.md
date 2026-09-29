@@ -22,6 +22,8 @@ node bin/archify.mjs deliver architecture imported.json output.html --quality sh
 
 An imported IR passes the same validation and delivery gates as hand-authored
 JSON; the final standalone HTML is produced by `deliver`, not by the importer.
+Omitting the output path prints the imported IR to stdout instead of writing
+a file — plain, or inside the `--json` receipt payload's `ir` field.
 
 ## Supported subset
 
@@ -90,12 +92,24 @@ disallowed characters (for example U+0000); any such character is rejected with
 ### Subgraphs
 
 `subgraph Label` … `end` becomes an architecture `boundaries` region whose
-`wraps` lists the component ids declared inside it. Nested subgraphs are
+`wraps` lists the component ids declared inside it. Mermaid's authored-id
+forms are accepted too — `subgraph id`, `subgraph id [Label]`, and
+`subgraph id["Label"]` (and the quoted `subgraph "Label"`) — where the id
+stays available for edge-endpoint resolution while the boundary label is the
+human title alone. Nested subgraphs are
 tracked: a component declared inside nested subgraphs is recorded in the
 `wraps` list of every enclosing region, so no region is emitted empty. The
 diagram-level direction applies to every region. The Mermaid `direction`
 directive inside a subgraph is rejected with
 `import/unsupported-direction-directive` instead of inventing components.
+
+Statements are one per line: Mermaid's `;` separator is not supported, so a
+second statement trailing the declaration is rejected with
+`import/declaration-remainder`, and a node directly after a completed
+`a --> b` (for example `A --> B C`) is rejected with
+`import/flowchart-expected-edge` rather than imported as a disconnected
+component. Diagnostic columns point into the source line as written,
+including indentation.
 
 ## Failure contract
 
@@ -130,12 +144,16 @@ $ node bin/archify.mjs import flowchart unsupported-open-link.mmd --json
 Importer diagnostic codes (all prefixed `import/`):
 
 - `import/flowchart-missing-declaration` — first line is not a typed declaration.
+- `import/declaration-remainder` — statements trailing the `flowchart <direction>` declaration on the same line.
 - `import/flowchart-empty-source` — no declaration found at all.
 - `import/flowchart-no-components` — no nodes declared.
 - `import/flowchart-invalid-node-id` — expected a node identifier.
+- `import/flowchart-expected-edge` — a node follows a completed edge on the same line with no edge operator.
 - `import/flowchart-unclosed-node-shape` / `import/flowchart-unclosed-quote` — shape or label not closed.
 - `import/flowchart-unclosed-edge-label` — `|` label not closed.
 - `import/flowchart-unbalanced-end` / `import/flowchart-unclosed-subgraph` — `subgraph`/`end` mismatch.
+- `import/subgraph-empty-title` / `import/empty-subgraph` — a subgraph has no title text or wraps no nodes.
+- `import/edge-references-subgraph` — an edge endpoint names a subgraph by its authored id or title.
 - `import/flowchart-undefined-source` / `import/flowchart-undefined-target` — edge endpoint never declared.
 - `import/flowchart-empty-label` — a node shape or quoted label is empty or contains only whitespace.
 - `import/flowchart-empty-edge-label` — an edge label is empty or contains only whitespace.
@@ -143,7 +161,7 @@ Importer diagnostic codes (all prefixed `import/`):
 - `import/xml-disallowed-character` — a label or title contains a character (for example U+0000) that cannot be represented in the delivered SVG.
 - `import/unsupported-edge-syntax` — open link `---` / `-.-` / `-..-` (arrowless).
 - `import/unsupported-direction-directive` — Mermaid `direction` directive.
-- `import/unsupported-keyword-*` — styling/interaction directives (`classDef`, `style`, `click`, …).
+- `import/unsupported-keyword-*` — styling/interaction directives (`classDef`, `style`, `click`, …); hyphenated node ids that merely begin with a keyword (`style-guide`, `click-tracker`) remain valid nodes.
 
 ## Runnable example
 

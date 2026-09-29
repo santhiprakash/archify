@@ -580,7 +580,7 @@ test('commitImportOutput refuses an output that resolves to the input at commit 
   fs.symlinkSync(src, out);
   try {
     const commit = commitImportOutput(src, out, '{"ir":true}\n');
-    assert.deepEqual(commit, { ok: false, reason: 'input/output-alias' });
+    assert.deepEqual(commit, { ok: false, reason: 'output/input-alias' });
     assert.equal(fs.readFileSync(src, 'utf8'), source, 'The Mermaid source must survive a swapped output symlink');
     assert.equal(fs.lstatSync(out).isSymbolicLink(), true, 'The refused commit must not touch the symlink');
     const leftovers = fs.readdirSync(tmpDir).filter((name) => name.startsWith('.archify-import-'));
@@ -1026,4 +1026,83 @@ test('imported and delivered flowcharts produce XML-clean SVG without disallowed
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
+});
+
+// --- Review round: keyword-prefixed ids, adjacency, diagnostic columns -----
+
+test('hyphenated node ids that start with a keyword prefix import as nodes', () => {
+  const result = parseFlowchart([
+    'flowchart LR',
+    '  style-guide[Style Guide] --> click-tracker[Clicks]',
+    '  click-tracker --> default-route[Default Route]',
+    '  class-registry --> elk-cluster',
+    '  interaction-log --> B',
+  ].join('\n'));
+  assert.ok(result.ok, `Expected ok, got diagnostics: ${JSON.stringify(result.diagnostics)}`);
+  const ids = result.ir.components.map((c) => c.id);
+  for (const id of ['style-guide', 'click-tracker', 'default-route', 'class-registry', 'elk-cluster', 'interaction-log', 'B']) {
+    assert.ok(ids.includes(id), `missing component ${id}`);
+  }
+  assert.equal(result.ir.connections.length, 4);
+});
+
+test('standalone styling keywords are still rejected when followed by whitespace or colon', () => {
+  for (const [line, code] of [
+    ['  style guide fill:#fff', 'import/unsupported-keyword-style'],
+    ['  classDef hero fill:#f9f', 'import/unsupported-keyword-classdef'],
+    ['  click N call fn()', 'import/unsupported-keyword-click'],
+    ['  accTitle: My Chart', 'import/unsupported-keyword-acctitle'],
+    ['  linkStyle 0 stroke:#fff', 'import/unsupported-keyword-linkstyle'],
+  ]) {
+    const result = parseFlowchart(`flowchart LR\n${line}\n  A --> B\n`);
+    assert.ok(!result.ok, `Expected rejection for "${line}"`);
+    assert.ok(result.diagnostics.some((d) => d.code === code), `Expected ${code}, got ${JSON.stringify(result.diagnostics)}`);
+  }
+});
+
+test('a node following a completed edge on the same line is diagnosed, not imported disconnected', () => {
+  for (const line of ['  A --> B C', '  A --> B C[Third]', '  A[One] B[Two]']) {
+    const result = parseFlowchart(`flowchart LR\n${line}\n`);
+    assert.ok(!result.ok, `Expected rejection for "${line}"`);
+    assert.ok(
+      result.diagnostics.some((d) => d.code === 'import/flowchart-expected-edge'),
+      `Expected import/flowchart-expected-edge for "${line}", got ${JSON.stringify(result.diagnostics)}`,
+    );
+  }
+  // Chained edges on one line remain valid — only bare adjacency is rejected.
+  const chained = parseFlowchart('flowchart LR\n  A --> B --> C\n');
+  assert.ok(chained.ok, `Expected ok, got ${JSON.stringify(chained.diagnostics)}`);
+});
+
+test('diagnostic columns point into the source line, not the trimmed text', () => {
+  // "    A[One] --- B[Two]" — the open link starts at column 12 in the file
+  // (4-space indent plus column 8 of the trimmed statement).
+  const openLink = parseFlowchart('flowchart LR\n  subgraph G\n    A[One] --- B[Two]\n  end\n');
+  assert.ok(!openLink.ok);
+  const linkDiag = openLink.diagnostics.find((d) => d.code === 'import/unsupported-edge-syntax');
+  assert.ok(linkDiag, `Expected unsupported-edge-syntax, got ${JSON.stringify(openLink.diagnostics)}`);
+  assert.equal(linkDiag.subject.line, 3);
+  assert.equal(linkDiag.subject.column, 12);
+  assert.equal(linkDiag.evidence.source.column, 12);
+
+  const keyword = parseFlowchart('flowchart LR\n   classDef x fill:#f9f\n');
+  assert.ok(!keyword.ok);
+  const keywordDiag = keyword.diagnostics.find((d) => d.code === 'import/unsupported-keyword-classdef');
+  assert.equal(keywordDiag.subject.column, 4);
+});
+
+test('CLI --json without an output path delivers the imported IR in the payload', () => {
+  const cli = path.join(skillRoot, 'bin', 'archify.mjs');
+  const fixture = path.join(fixturesDir, 'valid-simple.mmd');
+  const result = spawnSync(process.execPath, [cli, 'import', 'flowchart', fixture, '--json'], {
+    encoding: 'utf8',
+    stdio: 'pipe',
+  });
+  assert.equal(result.status, 0, `import failed: ${result.stderr}`);
+  const payload = JSON.parse(result.stdout.trim());
+  assert.equal(payload.ok, true);
+  assert.equal(payload.components, 4);
+  assert.ok(payload.ir, 'the --json payload must carry the imported IR when no output path is given');
+  assert.equal(payload.ir.diagram_type, 'architecture');
+  assert.equal(payload.ir.components.length, 4);
 });

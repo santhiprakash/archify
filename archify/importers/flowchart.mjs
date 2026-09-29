@@ -64,6 +64,21 @@ function diag(code, message, line, column, extras = {}) {
   };
 }
 
+// Diagnostics produced while parsing a statement carry columns relative to
+// the trimmed line text; shift them back into the source line's coordinates
+// so reported locations match the file as written.
+function shiftDiagColumns(diagnostic, offset) {
+  if (offset === 0) return diagnostic;
+  return {
+    ...diagnostic,
+    subject: { ...diagnostic.subject, column: diagnostic.subject.column + offset },
+    evidence: {
+      ...diagnostic.evidence,
+      source: { ...diagnostic.evidence.source, column: diagnostic.evidence.source.column + offset },
+    },
+  };
+}
+
 // Characters disallowed in XML 1.0 content (complement of #x9 | #xA | #xD |
 // [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]).
 const XML_INVALID_CHAR_RE = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F\uD800-\uDFFF\uFFFE\uFFFF]/u;
@@ -176,6 +191,9 @@ export function parseFlowchart(source) {
     const rawLine = lines[lineNum];
     const line = rawLine.trim();
     const lineNo = lineNum + 1;
+    // Diagnostics produced against `line` count columns from the trimmed
+    // start; add this offset back so they point at the source line.
+    const indent = rawLine.length - rawLine.trimStart().length;
 
     // Skip blank lines and comments.
     if (line === '' || line.startsWith('%%')) continue;
@@ -187,7 +205,7 @@ export function parseFlowchart(source) {
         diagnostics.push(diag(
           'import/flowchart-missing-declaration',
           'First non-comment line must declare "flowchart" or "graph" with a direction (TB, TD, BT, LR, RL).',
-          lineNo, 1,
+          lineNo, indent + 1,
           {
             supportedFixes: ['start the file with a line like "flowchart TD" or "graph LR"'],
           },
@@ -205,7 +223,7 @@ export function parseFlowchart(source) {
         diagnostics.push(diag(
           'import/declaration-remainder',
           `The declaration line contains statements after the direction ("${remainder}"); the importer processes one statement per line, so this topology would be dropped.`,
-          lineNo, decl[0].length + 1,
+          lineNo, decl[0].length + indent + 1,
           {
             supportedFixes: ['move each statement after "flowchart <direction>" onto its own line'],
           },
@@ -215,13 +233,16 @@ export function parseFlowchart(source) {
       continue;
     }
 
-    // Check for unsupported keywords.
-    const keyword = line.match(/^([A-Za-z]+)\b/);
+    // Check for unsupported keywords. A keyword only counts when it stands
+    // alone — hyphenated node ids like "style-guide" or "click-tracker" begin
+    // with a keyword-shaped prefix but are plain identifiers, so the match
+    // must be followed by whitespace, a colon ("accTitle:"), or the line end.
+    const keyword = line.match(/^([A-Za-z]+)(?=[\s:]|$)/);
     if (keyword && UNSUPPORTED_KEYWORDS.has(keyword[1])) {
       diagnostics.push(diag(
         `import/unsupported-keyword-${keyword[1].toLowerCase()}`,
         `Mermaid "${keyword[1]}" is not supported by the Archify flowchart importer. Styling and interaction directives are outside the supported subset.`,
-        lineNo, 1,
+        lineNo, indent + 1,
         {
           supportedFixes: [`remove the "${keyword[1]}" line; Archify does not import Mermaid styling or interaction directives`],
         },
@@ -236,7 +257,7 @@ export function parseFlowchart(source) {
       diagnostics.push(diag(
         'import/unsupported-direction-directive',
         'Mermaid "direction" is not supported by the Archify flowchart importer; the diagram-level direction applies to all regions.',
-        lineNo, 1,
+        lineNo, indent + 1,
         {
           supportedFixes: ['remove the "direction" line; declare the direction once on the first line, e.g. "flowchart TB"'],
         },
@@ -274,7 +295,7 @@ export function parseFlowchart(source) {
         textStart = restStart + 1;
       }
       const titleCheck = validateLabelText(
-        label, lineNo, textStart + 1,
+        label, lineNo, textStart + indent + 1,
         { code: 'import/subgraph-empty-title', kind: 'Subgraph title', context: 'boundary title' },
       );
       if (titleCheck) {
@@ -294,7 +315,7 @@ export function parseFlowchart(source) {
         diagnostics.push(diag(
           'import/flowchart-unbalanced-end',
           '"end" without a matching "subgraph" declaration.',
-          lineNo, 1,
+          lineNo, indent + 1,
           {
             supportedFixes: ['remove the extra "end" or add a matching "subgraph" before it'],
           },
@@ -309,7 +330,7 @@ export function parseFlowchart(source) {
         diagnostics.push(diag(
           'import/empty-subgraph',
           `Subgraph "${closing.boundary.label}" contains no nodes; every region must wrap at least one component.`,
-          lineNo, 1,
+          lineNo, indent + 1,
           {
             supportedFixes: [`declare at least one node inside subgraph "${closing.boundary.label}" or remove the empty subgraph`],
           },
@@ -322,7 +343,7 @@ export function parseFlowchart(source) {
     // Parse statement: nodes and/or edges.
     const stmtResult = parseStatement(line, lineNo);
     if (!stmtResult.ok) {
-      diagnostics.push(...stmtResult.diagnostics);
+      diagnostics.push(...stmtResult.diagnostics.map((d) => shiftDiagColumns(d, indent)));
       return { ok: false, diagnostics };
     }
 
@@ -342,7 +363,7 @@ export function parseFlowchart(source) {
         diagnostics.push(diag(
           'import/flowchart-conflicting-node-declaration',
           `Node "${comp.id}" is declared twice with different explicit definitions ("${existing.label}" and "${comp.label}").`,
-          lineNo, 1,
+          lineNo, indent + 1,
           {
             supportedFixes: [`keep a single explicit declaration for node "${comp.id}" with the text it should have`],
           },
@@ -659,6 +680,22 @@ function parseStatement(line, lineNo) {
           )],
         };
       }
+
+      // A node directly after a completed `a --> b` on the same line would
+      // import as a disconnected component, silently dropping the edge the
+      // author most likely meant. Mermaid separates statements with newlines
+      // or semicolons, so bare adjacency is diagnosed instead.
+      return {
+        ok: false,
+        diagnostics: [diag(
+          'import/flowchart-expected-edge',
+          `Expected an edge operator after node "${lastNode}" but found "${line.slice(pos, pos + 20).trim()}".`,
+          lineNo, pos + 1,
+          {
+            supportedFixes: ['connect the nodes with "-->", "-.->", or "==>", or declare each node on its own line'],
+          },
+        )],
+      };
     }
 
     // Parse a node.

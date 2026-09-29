@@ -7063,7 +7063,7 @@ async function commandImport(args) {
           ok: false,
           error: 'Output path aliases the input file.',
           diagnostics: [diagnostic({
-            code: 'input/output-alias',
+            code: 'output/input-alias',
             message: `Output path "${outputPath}" resolves to the input file; writing it would replace the Mermaid source with the import result.`,
             subject: { input: inputPath, output: outputPath },
             evidence: { input: path.resolve(inputPath), output: path.resolve(outputPath) },
@@ -7119,7 +7119,10 @@ async function commandImport(args) {
   }
 
   if (json) {
-    console.log(JSON.stringify(result.receipt, null, 2));
+    // Without an output path the bare receipt would report success while
+    // dropping the imported IR, so the JSON payload carries it inline.
+    const payload = outputPath ? result.receipt : { ...result.receipt, ir: result.ir };
+    console.log(JSON.stringify(payload, null, 2));
   }
 }
 
