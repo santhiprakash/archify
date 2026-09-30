@@ -1,0 +1,9 @@
+{"schema_version":1,"diagram_type":"architecture","meta":{"title":"Two-sided port competition","output":"x.html"},"components":[
+{"id":"source","type":"backend","label":"Source","pos":[300,320],"size":[160,60]},
+{"id":"source-peer","type":"backend","label":"Source peer","pos":[80,320],"size":[160,60]},
+{"id":"target","type":"database","label":"Target","pos":[300,100],"size":[160,60]},
+{"id":"target-peer","type":"database","label":"Target peer","pos":[560,100],"size":[160,60]}],
+"connections":[
+{"id":"source-target","from":"source","to":"target","fromSide":"top","toSide":"bottom"},
+{"id":"source-peer-target","from":"source-peer","to":"target","fromSide":"top","toSide":"bottom"},
+{"id":"source-target-peer","from":"source","to":"target-peer","fromSide":"top","toSide":"bottom"}]}
