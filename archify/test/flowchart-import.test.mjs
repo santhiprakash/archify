@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { parseFlowchart, importFlowchart } from '../importers/flowchart.mjs';
 import { commitImportOutput, OutputPathError } from '../renderers/shared/output-path.mjs';
+import { textUnits } from '../renderers/shared/utils.mjs';
 import { SaxesParser } from 'saxes';
 import { extractSvgs } from './helpers/xml.mjs';
 
@@ -563,9 +564,9 @@ function runCliImport(args) {
   return spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8', stdio: 'pipe' });
 }
 
-function runCliValidate(file) {
+function runCliValidate(file, quality = 'showcase') {
   const cli = path.join(skillRoot, 'bin', 'archify.mjs');
-  return spawnSync(process.execPath, [cli, 'validate', 'architecture', file, '--quality', 'showcase', '--json'], {
+  return spawnSync(process.execPath, [cli, 'validate', 'architecture', file, '--quality', quality, '--json'], {
     encoding: 'utf8',
     stdio: 'pipe',
   });
@@ -845,7 +846,7 @@ test('CLI import rejects the subgraph-edge case end to end and preserves the sou
 
 const LONG_LABEL = 'This is an extremely long relationship label that is likely wider than the available route gap';
 
-function importThenValidateShowcase(mmd, expectLabelDy = undefined) {
+function importThenValidateShowcase(mmd, expectPinnedBelowRow = false, quality = 'showcase') {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archify-handoff-'));
   const src = path.join(tmpDir, 'diagram.mmd');
   const out = path.join(tmpDir, 'out.json');
@@ -853,17 +854,43 @@ function importThenValidateShowcase(mmd, expectLabelDy = undefined) {
   try {
     const imported = runCliImport(['import', 'flowchart', src, out]);
     assert.equal(imported.status, 0, `Expected import to succeed: ${imported.stderr}`);
-    const validated = runCliValidate(out);
+    const validated = runCliValidate(out, quality);
     assert.equal(
       validated.status,
       0,
       `A supported import must pass the advertised validation handoff: ${validated.stdout}`,
     );
-    if (expectLabelDy !== undefined) {
+    if (expectPinnedBelowRow) {
       const ir = JSON.parse(fs.readFileSync(out, 'utf8'));
       const labeled = ir.connections.find((c) => c.label === LONG_LABEL);
       assert.ok(labeled, 'Expected the long-labeled connection');
-      assert.equal(labeled.labelDy, expectLabelDy);
+      const [from, to] = [labeled.from, labeled.to].map((id) =>
+        ir.components.find((c) => c.id === id));
+      if (labeled.labelAt) {
+        // Pinned labels anchor either in the guaranteed-empty strip above the
+        // topmost row or in the clear lane below the upper row.  The label
+        // rect is [lx - w/2, ly - 10, w, 14].
+        const minTop = Math.min(...ir.components.map((c) => c.pos[1]));
+        const laneTop = from.pos[1] === to.pos[1]
+          ? Math.max(from.pos[1] + from.size[1], to.pos[1] + to.size[1])
+          : Math.min(from.pos[1] + from.size[1], to.pos[1] + to.size[1]);
+        const ly = labeled.labelAt[1];
+        assert.ok(
+          ly + 4 <= minTop || ly - 10 >= laneTop,
+          `Expected the oversized label pinned into a clear zone, got ${JSON.stringify(labeled)}`,
+        );
+        assert.equal(labeled.labelDy, undefined);
+      } else {
+        // Unpinned same-row labels stay on the route: the layout must have
+        // widened the column boundary until the measured rect fits the gap.
+        const [left, right] = to.pos[0] > from.pos[0] ? [from, to] : [to, from];
+        const gap = right.pos[0] - (left.pos[0] + left.size[0]);
+        const units = textUnits(LONG_LABEL);
+        assert.ok(
+          gap >= Math.max(30, units * 4.8 + 10),
+          `Expected the column gap widened for the ${units}-unit label, got gap ${gap}: ${JSON.stringify(labeled)}`,
+        );
+      }
     }
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -871,11 +898,23 @@ function importThenValidateShowcase(mmd, expectLabelDy = undefined) {
 }
 
 test('a long horizontal edge label imports to gate-valid geometry (LR)', () => {
-  importThenValidateShowcase(`flowchart LR\n  A[Alpha] -->|${LONG_LABEL}| B[Beta]\n`, 54);
+  importThenValidateShowcase(`flowchart LR\n  A[Alpha] -->|${LONG_LABEL}| B[Beta]\n`, true);
 });
 
 test('a long horizontal edge label imports to gate-valid geometry (RL)', () => {
-  importThenValidateShowcase(`flowchart RL\n  A[Alpha] -->|${LONG_LABEL}| B[Beta]\n`, 54);
+  importThenValidateShowcase(`flowchart RL\n  A[Alpha] -->|${LONG_LABEL}| B[Beta]\n`, true);
+});
+
+test('a long edge label on a bent route clears the component row at standard quality', () => {
+  // A second edge bends the route off the straight two-point path; the
+  // canvas-left clamp then anchors the wide label inside a component row and
+  // fails the standard-quality handoff (showcase's auto-placement masked this).
+  importThenValidateShowcase([
+    'flowchart LR',
+    '  A[Alpha] --> B[Beta]',
+    `  A -->|"${LONG_LABEL}"| C[Gamma]`,
+    '',
+  ].join('\n'), true, 'standard');
 });
 
 test('a long vertical edge label imports to gate-valid geometry (TB)', () => {
@@ -973,6 +1012,21 @@ test('whitespace-only pipe edge labels are rejected', () => {
   const result = parseFlowchart('flowchart LR\n  A[Source] -->| | B[Target]\n');
   assert.equal(result.ok, false);
   assert.ok(result.diagnostics.some((d) => d.code === 'import/flowchart-empty-edge-label'));
+});
+
+test('quoted pipe edge labels import the inner text without the quotes', () => {
+  const result = parseFlowchart('flowchart LR\n  A[Source] -->|"HTTPS checkout request"| B[Target]\n');
+  assert.ok(result.ok, `Expected import to succeed: ${JSON.stringify(result.diagnostics)}`);
+  const conn = result.ir.connections.find((c) => c.from === 'A' && c.to === 'B');
+  assert.equal(conn.label, 'HTTPS checkout request');
+});
+
+test('empty quoted pipe edge labels are rejected like unquoted empty labels', () => {
+  for (const label of ['""', '"   "']) {
+    const result = parseFlowchart(`flowchart LR\n  A[Source] -->|${label}| B[Target]\n`);
+    assert.equal(result.ok, false, `Expected |${label}| to be rejected`);
+    assert.ok(result.diagnostics.some((d) => d.code === 'import/flowchart-empty-edge-label'));
+  }
 });
 
 test('invalid XML characters in subgraph titles are rejected at the importer', () => {

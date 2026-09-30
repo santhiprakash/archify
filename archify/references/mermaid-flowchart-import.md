@@ -73,6 +73,7 @@ back to the node id, because a blank label is not representable in Archify.
 | `==>` | directed, `variant: "emphasis"` |
 | `-- Text -->`, `-. Text .->` | directed with `label: "Text"` |
 | `A -->\|Text\| B` | directed with `label: "Text"` |
+| `A -->\|"Text"\| B` | directed with `label: "Text"` — surrounding double quotes are Mermaid delimiters, not content |
 
 Longer directed arrows are also preserved as their base variant: `--->` and
 `---->` are `solid`, `-.-->` and `-...->` are `dashed`, and `===>` and `====>`

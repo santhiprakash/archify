@@ -167,6 +167,27 @@ function safeLabelAt(label, fromPos, toPos, isHorizontal, labelDy) {
   return [Math.round(safeX), Math.round(ly)];
 }
 
+// The renderer's label rect for an anchor [lx, ly] is [lx - w/2, ly - 10, w, 14].
+// The importer mirrors it to detect anchors that still collide with a cell.
+function labelRectHitsComponent([lx, ly], width, positions) {
+  const [rx, rr, ry, rb] = [lx - width / 2, lx + width / 2, ly - 10, ly + 4];
+  for (const p of positions.values()) {
+    const [cx, cy] = p.pos;
+    const [cw, ch] = p.size;
+    if (rx < cx + cw && rr > cx && ry < cy + ch && rb > cy) return true;
+  }
+  return false;
+}
+
+// Clear-lane anchor below the upper endpoint's row: same-row pairs drop below
+// both cells; cross-row pairs drop into the inter-row lane below the upper
+// cell, which holds route segments but no components in the layered layout.
+function laneBelowRow(fromPos, toPos) {
+  const [fy, ty] = [fromPos.pos[1], toPos.pos[1]];
+  const [fb, tb] = [fy + fromPos.size[1], ty + toPos.size[1]];
+  return fy === ty ? Math.max(fb, tb) : Math.min(fb, tb);
+}
+
 // --- Parser --------------------------------------------------------------
 
 /**
@@ -490,6 +511,11 @@ export function parseFlowchart(source) {
   const isHorizontal = direction === 'LR' || direction === 'RL';
   const mirrored = direction === 'RL' || direction === 'BT';
   const positions = computeLayout(componentArray, connections, direction);
+  const minRowTop = Math.min(...[...positions.values()].map((p) => p.pos[1]));
+  // Staggered lane pins: wide labels that cannot stay on their route drop
+  // into the clear lane below the upper endpoint's row; each 18px slot is
+  // taken once so several labels never share one rect.
+  const laneUse = new Map();
 
   const ir = {
     schema_version: 1,
@@ -526,26 +552,73 @@ export function parseFlowchart(source) {
         // layout validation.
         if (!isHorizontal) {
           conn.labelDy = mirrored ? -(LAYOUT.GAP_Y / 2 + 10) : LAYOUT.GAP_Y / 2 + 10;
-        } else if (fromPos && toPos && fromPos.pos[1] === toPos.pos[1]) {
-          // A straight horizontal label wider than the gap between its
-          // endpoint cells overlaps both components (label rect spans the
-          // route midpoint). Move it below the route — half a cell plus label
-          // height and margin clears the 60px row — so the import output can
-          // pass the advertised validate handoff instead of failing it.
-          const labelWidth = Math.ceil(textUnits(c.label) * 6.6);
-          const gap = toPos.pos[0] > fromPos.pos[0]
-            ? toPos.pos[0] - (fromPos.pos[0] + fromPos.size[0])
-            : fromPos.pos[0] - (toPos.pos[0] + toPos.size[0]);
-          if (labelWidth > gap) {
-            conn.labelDy = LAYOUT.CELL_H / 2 + 14 + 10;
+        } else if (fromPos && toPos) {
+          const width = connectionLabelWidth(c.label);
+          const upperTop = Math.min(fromPos.pos[1], toPos.pos[1]);
+          // Pins use guaranteed-clear zones: the strip above the topmost row
+          // (no components or routes live above it, and it fits two staggered
+          // 18px slots at the default ORIGIN_Y), then staggered slots in the
+          // lane below the upper endpoint's row.
+          const pin = (x, preferTop) => {
+            let y;
+            if (preferTop && boundaries.length === 0) {
+              const slot = laneUse.get('top') || 0;
+              if (slot < 2) {
+                laneUse.set('top', slot + 1);
+                y = minRowTop - 28 + slot * 18;
+              }
+            }
+            if (y === undefined) {
+              const laneTop = laneBelowRow(fromPos, toPos);
+              const slot = laneUse.get(laneTop) || 0;
+              laneUse.set(laneTop, slot + 1);
+              y = laneTop + 14 + slot * 18;
+            }
+            conn.labelAt = [Math.round(Math.max(x, width / 2 + 2)), Math.round(y)];
+          };
+          if (fromPos.pos[1] === toPos.pos[1]) {
+            // Same-row labels stay on the route inside the (layout-widened)
+            // column gap.  Pin into a clear zone only when the edge spans
+            // further than the adjacent-column gap or a midpoint rect still
+            // reaches a cell — e.g. another node stranded mid-gap.  The
+            // renderer's label rect is [lx - w/2, ly - 10, w, 14].
+            const [left, right] = toPos.pos[0] > fromPos.pos[0] ? [fromPos, toPos] : [toPos, fromPos];
+            const gap = right.pos[0] - (left.pos[0] + left.size[0]);
+            const gapMidX = (left.pos[0] + left.size[0] + right.pos[0]) / 2;
+            const anchorY = left.pos[1] + left.size[1] / 2 - 10;
+            if (width > gap || labelRectHitsComponent([gapMidX, anchorY], width, positions)) {
+              pin(gapMidX, left.pos[1] === minRowTop);
+            }
+          } else if (Math.ceil(textUnits(c.label) * 6.6) > LAYOUT.GAP_X) {
+            // Cross-row: the default anchor rides the route and can dip into
+            // the target row's band; a label wider than the corridor then
+            // reaches a cell.  Pin it in a clear zone, centered on the facing
+            // ports.
+            const { fromSide, toSide } = defaultEndpointSides(fromPos, toPos, true);
+            const midX = (portCenter(fromPos, fromSide)[0] + portCenter(toPos, toSide)[0]) / 2;
+            pin(midX, upperTop === minRowTop);
           }
         }
         // Edge labels wider than the available left margin can clip the viewBox
         // left edge because the auto canvas only expands right/bottom. Use an
         // explicit labelAt when the default placement would overflow.
-        if (fromPos && toPos) {
+        if (fromPos && toPos && !conn.labelAt) {
           const labelAt = safeLabelAt(c.label, fromPos, toPos, isHorizontal, conn.labelDy || 0);
-          if (labelAt) conn.labelAt = labelAt;
+          if (labelAt) {
+            // The clamp keeps the source row's anchor height, so a label wide
+            // enough to need it can still overlap the cells it now spans. If
+            // the clamped rect reaches a component, drop the anchor into the
+            // clear lane below the upper row instead of emitting geometry
+            // that fails the validate handoff.
+            if (labelRectHitsComponent(labelAt, connectionLabelWidth(c.label), positions)) {
+              const laneTop = laneBelowRow(fromPos, toPos);
+              const slot = laneUse.get(laneTop) || 0;
+              laneUse.set(laneTop, slot + 1);
+              conn.labelAt = [labelAt[0], laneTop + 14 + slot * 18];
+            } else {
+              conn.labelAt = labelAt;
+            }
+          }
         }
       }
       if (c.variant && c.variant !== 'solid') conn.variant = c.variant;
@@ -632,12 +705,19 @@ function parseStatement(line, lineNo) {
             };
           }
           const rawLabel = line.slice(pos + 1, labelEnd);
+          // Mermaid wraps literal label text in double quotes inside `|...|`
+          // (`-->|"a-->b"|` renders `a-->b`); the quotes delimit the text, so
+          // they are not part of the delivered label.  Validate the inner
+          // text so |""| still reads as an empty label.
+          const unquoted = rawLabel.length >= 2 && rawLabel.startsWith('"') && rawLabel.endsWith('"')
+            ? rawLabel.slice(1, -1)
+            : rawLabel;
           const labelCheck = validateLabelText(
-            rawLabel, lineNo, pos + 2,
+            unquoted, lineNo, pos + 2 + (unquoted === rawLabel ? 0 : 1),
             { code: 'import/flowchart-empty-edge-label', kind: 'Edge label', context: 'relationship label' },
           );
           if (labelCheck) return { ok: false, diagnostics: [labelCheck] };
-          label = rawLabel;
+          label = unquoted;
           pos = labelEnd + 1;
           while (pos < line.length && /\s/.test(line[pos])) pos += 1;
         }
@@ -928,11 +1008,33 @@ function computeLayout(components, connections, direction) {
         ...layerIds.map((id) => widths.get(id)),
       ));
     }
+    // Same-row edges carry their label inside the gap between adjacent
+    // columns.  A label wider than the default GAP_X would overlap its
+    // endpoint cells — and relative offsets cannot promise clearance on bent
+    // routes — so widen that column boundary until the measured label rect
+    // (plus an 8px margin) fits on the route, the way Mermaid draws it.
+    const rowIndexById = new Map();
+    for (const [, layerIds] of layers) {
+      for (let i = 0; i < layerIds.length; i += 1) rowIndexById.set(layerIds[i], i);
+    }
+    const gapAfter = new Map();
+    for (const conn of connections) {
+      if (!conn.label) continue;
+      const df = depth.get(conn.from);
+      const dt = depth.get(conn.to);
+      if (df === undefined || dt === undefined) continue;
+      if (Math.abs(df - dt) !== 1) continue;
+      if (rowIndexById.get(conn.from) !== rowIndexById.get(conn.to)) continue;
+      const needed = connectionLabelWidth(conn.label) + 8;
+      const lo = Math.min(df, dt);
+      gapAfter.set(lo, Math.max(gapAfter.get(lo) ?? 0, needed));
+    }
     const columnX = new Map();
     let accX = ORIGIN_X;
     for (let dc = 0; dc <= maxDepth; dc += 1) {
       columnX.set(dc, accX);
-      accX += (columnMax.get(dc) ?? 0) + GAP_X;
+      const boundaryIndex = mirrorDepth ? maxDepth - dc - 1 : dc;
+      accX += (columnMax.get(dc) ?? 0) + Math.max(GAP_X, gapAfter.get(boundaryIndex) ?? 0);
     }
     for (const [d, layerIds] of layers) {
       const dCoord = mirrorDepth ? maxDepth - d : d;
