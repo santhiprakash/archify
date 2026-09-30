@@ -117,14 +117,17 @@ function validateLabelText(text, lineNo, startColumn, { code, kind, context }) {
   return null;
 }
 
-// A whitespace-delimited operator run ("--", "---", "-.-", …) inside a
-// labeled-arrow text means the match swallowed a second statement:
-// "A -- x --- B --> C" would otherwise import as A→C labeled "x --- B",
-// silently dropping node B and the open link.  The run is anchored at the
-// start of the label or after whitespace so embedded hyphens ("read-only")
-// and version dots ("v1.2") stay valid; single spaced dashes ("a - b") are
-// not operator runs and remain label text.
-const EMBEDDED_EDGE_OPERATOR_RE = /(^|\s)(-{2,}|-\.+-)/;
+// A whitespace-delimited operator run ("--", "---", "-.-", "===", "~~~",
+// "<--", "o--", …) inside a labeled-arrow text means the match swallowed a
+// second statement: "A -- x --- B --> C" would otherwise import as A→C
+// labeled "x --- B", silently dropping node B and the open link.  The run
+// covers every Mermaid link shaft family — dash ("--"/"---"), dotted
+// ("-.-"), thick ("=="), and invisible ("~~"), plus the back-arrow and
+// circle/cross endpoint prefixes ("<--", "o--", "x--") — and is anchored at
+// the start of the label or after whitespace so embedded hyphens
+// ("read-only") and version dots ("v1.2") stay valid; single spaced dashes
+// ("a - b") are not operator runs and remain label text.
+const EMBEDDED_EDGE_OPERATOR_RE = /(^|\s)([<ox]?-{2,}|-\.+-|={2,}|~{2,})/;
 
 // Validate a labeled-arrow text for an embedded edge-operator run.  Returns
 // a diagnostic if found; otherwise null so the caller can use the label.

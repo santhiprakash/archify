@@ -381,14 +381,22 @@ test('dotted labeled arrows accept dots inside the label text', () => {
 test('labeled-arrow text cannot absorb an operator run and drop the node after it', () => {
   // "A -- x --- B --> C" previously imported as a single A→C edge labeled
   // "x --- B", silently dropping node B and the open link. The same applies
-  // to the dotted "-. text .->" form and to a label starting with an
-  // operator run.
+  // to the dotted "-. text .->" form, to a label starting with an operator
+  // run, and to every other Mermaid link shaft family — thick "===",
+  // invisible "~~~", back-arrow "<--", and circle/cross endpoints "o--"/"x--".
   for (const stmt of [
     'A -- x --- B --> C',
     'A -- x -- B --> C',
     'A -- x -.- B --> C',
     'A -- --- B --> C',
     'A -. x --- B .-> C',
+    'A -- x === B --> C',
+    'A -- x == B --> C',
+    'A -- x ~~~ B --> C',
+    'A -- x <-- B --> C',
+    'A -- x o-- B --> C',
+    'A -- x x-- B --> C',
+    'A -. x === B .-> C',
   ]) {
     const result = parseFlowchart(`flowchart LR\n${stmt}\n`);
     assert.ok(!result.ok, `Expected "${stmt}" to be rejected, got ok`);
@@ -399,10 +407,18 @@ test('labeled-arrow text cannot absorb an operator run and drop the node after i
   }
 });
 
-test('single spaced dashes are still valid labeled-arrow text', () => {
-  const result = parseFlowchart('flowchart LR\nA -- cost - benefit --> B\n');
-  assert.ok(result.ok, `Expected ok, got: ${JSON.stringify(result.diagnostics)}`);
-  assert.equal(result.ir.connections[0].label, 'cost - benefit');
+test('single spaced operator characters are still valid labeled-arrow text', () => {
+  for (const [stmt, label] of [
+    ['A -- cost - benefit --> B', 'cost - benefit'],
+    ['A -- width = height --> B', 'width = height'],
+    ['A -- almost ~ done --> B', 'almost ~ done'],
+    ['A -- v~beta --> B', 'v~beta'],
+    ['A -- x==y --> B', 'x==y'],
+  ]) {
+    const result = parseFlowchart(`flowchart LR\n${stmt}\n`);
+    assert.ok(result.ok, `Expected "${stmt}" to import, got: ${JSON.stringify(result.diagnostics)}`);
+    assert.equal(result.ir.connections[0].label, label);
+  }
 });
 
 test('a trailing ";" on a subgraph declaration does not leak into the title', () => {
