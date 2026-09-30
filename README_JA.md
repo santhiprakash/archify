@@ -29,7 +29,7 @@
   <a href="https://github.com/tt-a1i/archify/stargazers"><img src="https://img.shields.io/github/stars/tt-a1i/archify?style=flat-square&amp;color=E5B650&amp;logo=github&amp;label=Stars" alt="GitHub stars" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e?style=flat-square" alt="MIT License" /></a>
   <a href="archify/SKILL.md"><img src="https://img.shields.io/badge/Agent-Skill-7C3AED?style=flat-square" alt="Agent Skill" /></a>
-  <a href="CHANGELOG.md#301--2026-09-28"><img src="https://img.shields.io/badge/version-3.0.1-0891b2?style=flat-square" alt="Stable version 3.0.1" /></a>
+  <a href="CHANGELOG.md#unreleased"><img src="https://img.shields.io/badge/version-3.0.2--dev.1-0891b2?style=flat-square" alt="Development version 3.0.2-dev.1" /></a>
 </p>
 
 <p align="center">
@@ -42,13 +42,11 @@
 
 ## 実際の Archify
 
-<p align="center">
-  <a href="https://tt-a1i.github.io/archify/gallery.html"><img src="docs/assets/archify-live-proof.gif" alt="Signal Flow、Blueprint、Classic の各プリセットで動作する 3 つの検証済み Archify 成果物" width="960"/></a>
-  <br/>
-  <sub><strong>実際に生成された 3 つの成果物。</strong> Signal Flow · Blueprint · Classic · <a href="https://tt-a1i.github.io/archify/gallery.html">インタラクティブな Proof Lab を開く ↗</a></sub>
-</p>
+<!-- archify-launch-video -->
 
-**プレビューをクリックすると、実際のインタラクティブな成果物が開きます。** GIF は動きを見せるためのもので、実際に探索できるのはブラウザで開く HTML のほうです。
+https://github.com/user-attachments/assets/78570807-ba1d-4737-953f-55504a378a87
+
+**ひと言で、リポジトリを可視化。** 約35秒の英語デモで、図の操作、ソースコードへのリンク、経路の追跡をご覧ください。[インタラクティブな作例を試す ↗](https://tt-a1i.github.io/archify/gallery.html)
 
 <a id="start"></a>
 
@@ -79,6 +77,10 @@ the API checks Redis, and a cache miss queries PostgreSQL and fills the cache.
 <tr>
   <td align="center" width="240"><a href="https://supercode.sh/?utm_source=archify"><img src="https://cdn.supercode.sh/sponsors/supercode-logo.png" alt="Supercode" width="200"/></a><br/><strong><a href="https://supercode.sh/?utm_source=archify">supercode.sh</a></strong></td>
 <td><a href="https://supercode.sh/?utm_source=archify">Supercode</a> は Archify をスポンサーし、トークン最適化・厳選された Skills・仕様駆動開発によって Codex と Cursor を強化しています。Archify は <a href="https://supercode.sh/en/skills/tt-a1i/archify/archify">Supercode Editor’s Choice</a> スキルに選出されています。<br/><br/><a href="https://supercode.sh/en/skills/tt-a1i/archify/archify"><img src="https://supercode.sh/badges/editors-choice.svg" alt="Supercode Editor’s Choice — Archify" width="240" height="55"/></a></td>
+</tr>
+<tr>
+<td align="center" width="240"><a href="https://www.openlux.ai/register?channel=c_qdvanbpc"><img src="docs/assets/sponsors/openlux-logo.png" alt="OpenLux" width="200" /></a><br/><strong><a href="https://www.openlux.ai/register?channel=c_qdvanbpc">OpenLux</a></strong></td>
+<td>OpenLux による本プロジェクトへのスポンサー支援に感謝します！OpenLux は、世界の主要プロバイダーの AI モデルを集約した企業向けのオールインワン AI プラットフォームです。高速で安定したサービスと迅速な技術サポートを提供し、Claude、OpenAI、Gemini シリーズの基本料金は、それぞれ公式料金の 8.82%、4%、8% から利用できます。<br/><br/>Archify ユーザー限定特典：専用リンクから登録すると、クレジットのチャージが最大 7.5% 割引になります！<br/><br/><a href="https://www.openlux.ai/register?channel=c_qdvanbpc">OpenLux を試す →</a></td>
 </tr>
 <tr><td align="center" width="240"><a href="https://github.com/EverMind-AI/Raven"><img src="docs/assets/sponsors/evermind-archify-raven.png" alt="Archify × Raven" width="200" /></a><br/><strong><a href="https://github.com/EverMind-AI">EverMind</a> · <a href="https://github.com/EverMind-AI/Raven">Raven</a></strong></td><td>EverMind は Archify をスポンサーし、エージェント向けのメモリ基盤を開発しています。同社の <a href="https://github.com/EverMind-AI/Raven"><strong>Raven</strong></a> ハーネスは、検証済みでインタラクティブなシステムマップのために Archify を Skill としてサポートしています。</td></tr>
 </table>
@@ -165,7 +167,7 @@ Export メニューから PNG をクリップボードにコピーしたり、�
 
 ## クイックスタート
 
-**現在の安定版:** `v3.0.1`。[変更履歴](CHANGELOG.md#301--2026-09-28)を参照してください。
+**現在の開発版:** `v3.0.2-dev.1`。[変更履歴](CHANGELOG.md#unreleased)を参照してください。
 
 ### 1. インストール
 
@@ -398,6 +400,30 @@ Mermaid の自動パース、汎用オートレイアウト、ホスティング
 ## コントリビュート
 
 Issue、プルリクエスト、実際の図の投稿を歓迎します。まずは[コントリビューションガイド](CONTRIBUTING.md)をご覧ください。不具合は再現可能なバグ報告フォームから、検証済みの図は[コミュニティショーケースフォーム](https://github.com/tt-a1i/archify/issues/new?template=showcase.yml)から投稿できます。&nbsp;·&nbsp;[LINUX&nbsp;DO](https://linux.do)
+
+## Archify を支援する
+
+Archify が役に立ったら、継続的な開発をご支援いただけるとうれしいです。プロジェクトへの応援、ありがとうございます ❤️
+
+<details>
+<summary>WeChat Pay で支援する</summary>
+
+WeChat で下の QR コードをスキャンするか、画像を保存して WeChat で読み取ってください。
+
+<p align="center"><img src="docs/assets/support/wechat-pay.png" alt="Archify の開発者を支援する WeChat Pay の QR コード" width="240" /></p>
+
+</details>
+
+<details>
+<summary>Alipay で支援する</summary>
+
+Alipay で下の QR コードをスキャンするか、画像を保存して Alipay で読み取ってください。
+
+<p align="center"><img src="docs/assets/support/alipay.png" alt="Archify の開発者を支援する Alipay の QR コード（氏名は非表示）" width="240" /></p>
+
+</details>
+
+利用、共有、不具合の報告、改善への貢献も、プロジェクトの支えになります。
 
 ## Star History
 
