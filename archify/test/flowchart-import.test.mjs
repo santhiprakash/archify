@@ -363,6 +363,27 @@ test('a Mermaid ";" statement separator exits with the dedicated diagnostic', ()
   assert.ok(decl.diagnostics.some((d) => d.code === 'import/declaration-remainder'));
 });
 
+test('labeled arrows accept hyphens in the text and longer arrow shafts', () => {
+  const result = parseFlowchart('flowchart LR\nA -- read-only --> B\nC -- submit ----> D\n');
+  assert.ok(result.ok, `Expected ok, got: ${JSON.stringify(result.diagnostics)}`);
+  assert.ok(result.ir.connections.some((c) => c.from === 'A' && c.to === 'B' && c.label === 'read-only'));
+  assert.ok(result.ir.connections.some((c) => c.from === 'C' && c.to === 'D' && c.label === 'submit'
+    && (c.variant || 'solid') === 'solid'));
+});
+
+test('dotted labeled arrows accept dots inside the label text', () => {
+  const result = parseFlowchart('flowchart LR\nE -. v1.2 .-> F\n');
+  assert.ok(result.ok, `Expected ok, got: ${JSON.stringify(result.diagnostics)}`);
+  assert.equal(result.ir.connections[0].label, 'v1.2');
+  assert.equal(result.ir.connections[0].variant, 'dashed');
+});
+
+test('a trailing ";" on a subgraph declaration does not leak into the title', () => {
+  const result = parseFlowchart('flowchart LR\nsubgraph Tier;\n  A[Inside]\nend\nB[Out] --> A\n');
+  assert.ok(result.ok, `Expected ok, got: ${JSON.stringify(result.diagnostics)}`);
+  assert.ok(result.ir.boundaries.some((b) => b.label === 'Tier' && b.wraps.includes('A')));
+});
+
 test('node ids with internal hyphens are preserved when not starting an edge', () => {
   const result = parseFlowchart('flowchart LR\nA-B --> B-C\n');
   assert.ok(result.ok, `Expected ok, got: ${JSON.stringify(result.diagnostics)}`);

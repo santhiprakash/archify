@@ -104,10 +104,14 @@ diagram-level direction applies to every region. The Mermaid `direction`
 directive inside a subgraph is rejected with
 `import/unsupported-direction-directive` instead of inventing components.
 
-Statements are one per line: Mermaid's `;` separator is not supported, so a
-second statement trailing the declaration is rejected with
-`import/declaration-remainder`, and a node directly after a completed
-`a --> b` (for example `A --> B C`) is rejected with
+Statements are one per line: Mermaid's `;` separator is not supported. A `;`
+trailing the `flowchart <direction>` declaration or a `subgraph` line is
+tolerated as a terminator, but a second statement joined by `;` on that line
+is rejected
+with `import/declaration-remainder`, and a `;` inside any other statement
+(trailing or joined, for example `A --> B;` or `A --> B; C --> D`) is
+rejected with `import/unsupported-statement-separator`. A node directly
+after a completed `a --> b` (for example `A --> B C`) is rejected with
 `import/flowchart-expected-edge` rather than imported as a disconnected
 component. Diagnostic columns point into the source line as written,
 including indentation.

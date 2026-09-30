@@ -297,7 +297,9 @@ export function parseFlowchart(source) {
       // title alone — keeping the raw "id [Title]" text as the label both
       // corrupted the emitted topology and hid the authored identity from
       // edge-endpoint resolution below.
-      const rest = subgraphMatch[1];
+      // A trailing ";" terminates the declaration in real-world sources —
+      // strip it rather than absorbing it into the boundary title.
+      const rest = subgraphMatch[1].replace(/[;\s]+$/, '');
       const restStart = subgraphMatch.index + subgraphMatch[0].indexOf(rest);
       let authoredId = null;
       let label = rest;
@@ -924,8 +926,11 @@ function parseEdge(line, pos, lineNo) {
     }
   }
 
-  // Check for -- text --> pattern.
-  const labeledArrow = line.slice(pos).match(/^--\s+([^>-]+?)\s+-->/d);
+  // Check for -- text --> pattern.  The label may contain hyphens ("read-only")
+  // and the arrow may carry extra dashes ("-- text ---->"), matching the
+  // documented longer-arrow rule; only ">" is excluded so the terminator
+  // itself can never be absorbed into the label.
+  const labeledArrow = line.slice(pos).match(/^--\s+([^>]+?)\s+--+>/d);
   if (labeledArrow) {
     const label = labeledArrow[1];
     const labelStart = pos + labeledArrow.indices[1][0] + 1;
@@ -937,8 +942,10 @@ function parseEdge(line, pos, lineNo) {
     return { ok: true, variant: 'solid', label, labelStart, nextPos: pos + labeledArrow[0].length };
   }
 
-  // Check for -. text .-> pattern.
-  const dottedLabeled = line.slice(pos).match(/^-\.\s+([^>.]+?)\s+\.->/d);
+  // Check for -. text .-> pattern.  Same label freedom as the solid form —
+  // dots and hyphens inside the text ("v1.2", "read-only") are fine; only the
+  // ">" of the ".->" terminator is excluded.
+  const dottedLabeled = line.slice(pos).match(/^-\.\s+([^>]+?)\s+\.->/d);
   if (dottedLabeled) {
     const label = dottedLabeled[1];
     const labelStart = pos + dottedLabeled.indices[1][0] + 1;
