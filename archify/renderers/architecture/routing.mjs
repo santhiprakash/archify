@@ -414,7 +414,12 @@ export function createRouter(components, connections = [], {
       // Both endpoints already occupy shared spread slots. When the relationship
       // is near-aligned, prefer a zero-bend shared axis if compatible slots keep
       // the competing ports distinct; otherwise preserve the outside bridge.
-      if (alignmentDelta < AUTOMATIC_PORT_ALIGNMENT_DELTA) {
+      // Reciprocal pairs keep the bridge as well: they are repaired jointly
+      // after planning into separate straight lanes. Authored label placement
+      // keeps the bridge too, so a segment the author targeted still exists.
+      if (alignmentDelta < AUTOMATIC_PORT_ALIGNMENT_DELTA
+          && !reciprocal(conn)
+          && !hasAuthoredLabelPlacement(conn)) {
         const straightened = straightenSharedSpreadPorts(
           conn, from, to, start, end, fromSide, toSide, horizontallyFacing,
         );
