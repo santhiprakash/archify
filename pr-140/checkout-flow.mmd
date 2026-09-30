@@ -1,0 +1,16 @@
+flowchart LR
+  subgraph edge["Public edge tier"]
+    cdn["CDN edge cache"]
+    gw["Public API gateway"]
+  end
+  subgraph core["Core services"]
+    api["Checkout API service"]
+    worker["Asynchronous fulfillment worker"]
+    db[("Orders database")]
+  end
+  user["Storefront customer"] -->|"HTTPS checkout request"| gw
+  cdn -->|"serves static product assets"| user
+  gw -->|"REST /orders submit"| api
+  api -->|"writes order rows"| db
+  api -->|"publishes order.created events"| worker
+  worker -->|"reads order rows"| db

@@ -1,0 +1,153 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Imported Flowchart",
+    "output": "imported-flowchart.html"
+  },
+  "components": [
+    {
+      "id": "cdn",
+      "type": "backend",
+      "label": "CDN edge cache",
+      "pos": [
+        40,
+        40
+      ],
+      "size": [
+        140,
+        60
+      ]
+    },
+    {
+      "id": "gw",
+      "type": "backend",
+      "label": "Public API gateway",
+      "pos": [
+        596,
+        40
+      ],
+      "size": [
+        140,
+        60
+      ]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "Checkout API service",
+      "pos": [
+        845.2,
+        40
+      ],
+      "size": [
+        140,
+        60
+      ]
+    },
+    {
+      "id": "worker",
+      "type": "backend",
+      "label": "Asynchronous fulfillment worker",
+      "pos": [
+        1147.2,
+        40
+      ],
+      "size": [
+        201,
+        60
+      ]
+    },
+    {
+      "id": "db",
+      "type": "database",
+      "label": "Orders database",
+      "pos": [
+        1147.2,
+        180
+      ],
+      "size": [
+        140,
+        60
+      ]
+    },
+    {
+      "id": "user",
+      "type": "backend",
+      "label": "Storefront customer",
+      "pos": [
+        332.4,
+        40
+      ],
+      "size": [
+        140,
+        60
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "edge-1",
+      "from": "user",
+      "to": "gw",
+      "label": "HTTPS checkout request"
+    },
+    {
+      "id": "edge-2",
+      "from": "cdn",
+      "to": "user",
+      "label": "serves static product assets"
+    },
+    {
+      "id": "edge-3",
+      "from": "gw",
+      "to": "api",
+      "label": "REST /orders submit"
+    },
+    {
+      "id": "edge-4",
+      "from": "api",
+      "to": "db",
+      "label": "writes order rows",
+      "labelAt": [
+        1066,
+        114
+      ]
+    },
+    {
+      "id": "edge-5",
+      "from": "api",
+      "to": "worker",
+      "label": "publishes order.created events"
+    },
+    {
+      "id": "edge-6",
+      "from": "worker",
+      "to": "db",
+      "label": "reads order rows",
+      "labelAt": [
+        1217,
+        132
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Public edge tier",
+      "wraps": [
+        "cdn",
+        "gw"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "Core services",
+      "wraps": [
+        "api",
+        "worker",
+        "db"
+      ]
+    }
+  ]
+}
