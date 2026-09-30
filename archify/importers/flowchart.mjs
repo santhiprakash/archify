@@ -117,6 +117,30 @@ function validateLabelText(text, lineNo, startColumn, { code, kind, context }) {
   return null;
 }
 
+// A whitespace-delimited operator run ("--", "---", "-.-", …) inside a
+// labeled-arrow text means the match swallowed a second statement:
+// "A -- x --- B --> C" would otherwise import as A→C labeled "x --- B",
+// silently dropping node B and the open link.  The run is anchored at the
+// start of the label or after whitespace so embedded hyphens ("read-only")
+// and version dots ("v1.2") stay valid; single spaced dashes ("a - b") are
+// not operator runs and remain label text.
+const EMBEDDED_EDGE_OPERATOR_RE = /(^|\s)(-{2,}|-\.+-)/;
+
+// Validate a labeled-arrow text for an embedded edge-operator run.  Returns
+// a diagnostic if found; otherwise null so the caller can use the label.
+function checkEdgeLabelOperators(text, lineNo, startColumn) {
+  const match = EMBEDDED_EDGE_OPERATOR_RE.exec(text);
+  if (!match) return null;
+  return diag(
+    'import/flowchart-edge-label-operator',
+    `Edge label "${text}" contains "${match[2]}", which reads as an edge operator: the text after it would be imported as part of the label and the node it names would be dropped.`,
+    lineNo, startColumn + match.index + match[1].length,
+    {
+      supportedFixes: ['split the statement at the embedded operator onto its own line, or remove the operator run from the label text'],
+    },
+  );
+}
+
 // --- Layout helpers ------------------------------------------------------
 
 // The architecture renderer measures connection labels with this width so the
@@ -934,6 +958,8 @@ function parseEdge(line, pos, lineNo) {
   if (labeledArrow) {
     const label = labeledArrow[1];
     const labelStart = pos + labeledArrow.indices[1][0] + 1;
+    const operatorCheck = checkEdgeLabelOperators(label, lineNo, labelStart);
+    if (operatorCheck) return { ok: false, diagnostics: [operatorCheck] };
     const labelCheck = validateLabelText(
       label, lineNo, labelStart,
       { code: 'import/flowchart-empty-edge-label', kind: 'Edge label', context: 'relationship label' },
@@ -949,6 +975,8 @@ function parseEdge(line, pos, lineNo) {
   if (dottedLabeled) {
     const label = dottedLabeled[1];
     const labelStart = pos + dottedLabeled.indices[1][0] + 1;
+    const operatorCheck = checkEdgeLabelOperators(label, lineNo, labelStart);
+    if (operatorCheck) return { ok: false, diagnostics: [operatorCheck] };
     const labelCheck = validateLabelText(
       label, lineNo, labelStart,
       { code: 'import/flowchart-empty-edge-label', kind: 'Edge label', context: 'relationship label' },

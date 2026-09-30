@@ -86,6 +86,11 @@ with `import/unsupported-edge-syntax`.
 
 Edge labels must contain at least one non-whitespace character; a blank or
 whitespace-only edge label exits with `import/flowchart-empty-edge-label`.
+A `-- text -->` or `-. text .->` label must not contain a whitespace-delimited
+operator run (`--`, `---`, `-.-`, …): text like `A -- x --- B --> C` would
+otherwise import as a single edge labeled `x --- B`, silently dropping node
+`B` and the open link, so it is rejected with
+`import/flowchart-edge-label-operator` instead.
 Labels, node labels, and subgraph titles must also be free of XML 1.0
 disallowed characters (for example U+0000); any such character is rejected with
 `import/xml-disallowed-character` so that the delivered SVG remains well-formed.
@@ -163,6 +168,7 @@ Importer diagnostic codes (all prefixed `import/`):
 - `import/flowchart-undefined-source` / `import/flowchart-undefined-target` — edge endpoint never declared.
 - `import/flowchart-empty-label` — a node shape or quoted label is empty or contains only whitespace.
 - `import/flowchart-empty-edge-label` — an edge label is empty or contains only whitespace.
+- `import/flowchart-edge-label-operator` — a `-- text -->` / `-. text .->` label contains a whitespace-delimited operator run (`--`, `---`, `-.-`, …), which would silently drop the statement text after it.
 - `import/flowchart-conflicting-node-declaration` — same id declared twice with different explicit text/shape.
 - `import/xml-disallowed-character` — a label or title contains a character (for example U+0000) that cannot be represented in the delivered SVG.
 - `import/unsupported-edge-syntax` — open link `---` / `-.-` / `-..-` (arrowless).
