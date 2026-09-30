@@ -328,6 +328,41 @@ test('long directed arrows are mapped to their edge variant', () => {
   assert.equal(emphasis.ir.connections[0].variant, 'emphasis');
 });
 
+test('a source-less two-node cycle keeps its nodes on the declared layout axis', () => {
+  // "A --> B" + "B --> A" has no in-degree-zero node; the layout must still
+  // layer the cycle along the declared axis instead of stacking both nodes
+  // in the first column/row.
+  const lr = parseFlowchart('flowchart LR\n  A --> B\n  B --> A\n');
+  assert.ok(lr.ok, `Expected ok, got diagnostics: ${JSON.stringify(lr.diagnostics)}`);
+  const aLr = lr.ir.components.find((c) => c.id === 'A');
+  const bLr = lr.ir.components.find((c) => c.id === 'B');
+  assert.ok(aLr.pos[0] < bLr.pos[0], `LR cycle: A x=${aLr.pos[0]} must sit left of B x=${bLr.pos[0]}`);
+
+  const td = parseFlowchart('flowchart TD\n  A --> B\n  B --> A\n');
+  assert.ok(td.ok, `Expected ok, got diagnostics: ${JSON.stringify(td.diagnostics)}`);
+  const aTd = td.ir.components.find((c) => c.id === 'A');
+  const bTd = td.ir.components.find((c) => c.id === 'B');
+  assert.ok(aTd.pos[1] < bTd.pos[1], `TD cycle: A y=${aTd.pos[1]} must sit above B y=${bTd.pos[1]}`);
+});
+
+test('a Mermaid ";" statement separator exits with the dedicated diagnostic', () => {
+  const trailing = parseFlowchart('flowchart LR\n  A --> B;\n');
+  assert.ok(!trailing.ok, 'Expected a trailing ";" to be rejected');
+  const trailingDiag = trailing.diagnostics.find((d) => d.code === 'import/unsupported-statement-separator');
+  assert.ok(trailingDiag, `Expected unsupported-statement-separator, got: ${JSON.stringify(trailing.diagnostics)}`);
+
+  const joined = parseFlowchart('flowchart LR\n  A --> B; C --> D\n');
+  assert.ok(!joined.ok, 'Expected a ";"-joined statement pair to be rejected');
+  const joinedDiag = joined.diagnostics.find((d) => d.code === 'import/unsupported-statement-separator');
+  assert.ok(joinedDiag, `Expected unsupported-statement-separator, got: ${JSON.stringify(joined.diagnostics)}`);
+  assert.ok(joinedDiag.message.includes('C --> D'), 'The diagnostic must name the topology that would be dropped');
+
+  // The declaration line keeps its own diagnostic for ";"-joined statements.
+  const decl = parseFlowchart('flowchart LR; A --> B\n');
+  assert.ok(!decl.ok, 'Expected a ";"-joined declaration statement to be rejected');
+  assert.ok(decl.diagnostics.some((d) => d.code === 'import/declaration-remainder'));
+});
+
 test('node ids with internal hyphens are preserved when not starting an edge', () => {
   const result = parseFlowchart('flowchart LR\nA-B --> B-C\n');
   assert.ok(result.ok, `Expected ok, got: ${JSON.stringify(result.diagnostics)}`);

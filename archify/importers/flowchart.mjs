@@ -761,6 +761,28 @@ function parseStatement(line, lineNo) {
         };
       }
 
+      // Mermaid also separates statements with ";". The declaration line
+      // already rejects ";"-joined statements (import/declaration-remainder),
+      // so a ";" where an edge or continuation was expected gets the same
+      // treatment under its own diagnostic instead of a misleading
+      // "expected an edge operator" message.
+      if (line[pos] === ';') {
+        const rest = line.slice(pos + 1).replace(/^[\s;]+/, '').trim();
+        return {
+          ok: false,
+          diagnostics: [diag(
+            'import/unsupported-statement-separator',
+            rest
+              ? `Statements are separated by ";" ("${rest}" follows), but the importer processes one statement per line, so the topology after the separator would be dropped.`
+              : 'The statement ends with a Mermaid ";" separator; the importer processes one statement per line, so a trailing separator is not supported.',
+            lineNo, pos + 1,
+            {
+              supportedFixes: ['remove the ";" or put each statement on its own line'],
+            },
+          )],
+        };
+      }
+
       // A node directly after a completed `a --> b` on the same line would
       // import as a disconnected component, silently dropping the edge the
       // author most likely meant. Mermaid separates statements with newlines
@@ -963,20 +985,30 @@ function computeLayout(components, connections, direction) {
   for (const id of queue) depth.set(id, 0);
 
   let head = 0;
-  while (head < queue.length) {
-    const current = queue[head++];
-    const currentDepth = depth.get(current);
-    for (const conn of connections) {
-      if (conn.from === current && !depth.has(conn.to)) {
-        depth.set(conn.to, currentDepth + 1);
-        queue.push(conn.to);
+  const drain = () => {
+    while (head < queue.length) {
+      const current = queue[head++];
+      const currentDepth = depth.get(current);
+      for (const conn of connections) {
+        if (conn.from === current && !depth.has(conn.to)) {
+          depth.set(conn.to, currentDepth + 1);
+          queue.push(conn.to);
+        }
       }
     }
-  }
-
-  // Any nodes not reached by BFS get depth 0.
+  };
+  drain();
+  // A source-less cycle (every node has an incoming edge — "A --> B" plus
+  // "B --> A") leaves the seed queue empty, which would drop the whole
+  // component into depth 0 and run the cycle's edges across rows instead of
+  // along the declared layout axis. Seed a BFS from the first unvisited node
+  // in declaration order and drain, until every component is layered.
   for (const id of ids) {
-    if (!depth.has(id)) depth.set(id, 0);
+    if (!depth.has(id)) {
+      depth.set(id, 0);
+      queue.push(id);
+      drain();
+    }
   }
 
   // Group nodes by depth layer.

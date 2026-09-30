@@ -76,7 +76,7 @@ back to the node id, because a blank label is not representable in Archify.
 | `A -->\|"Text"\| B` | directed with `label: "Text"` — surrounding double quotes are Mermaid delimiters, not content |
 
 Longer directed arrows are also preserved as their base variant: `--->` and
-`---->` are `solid`, `-.-->` and `-...->` are `dashed`, and `===>` and `====>`
+`---->` are `solid`, `-..->` and `-...->` are `dashed`, and `===>` and `====>`
 are `emphasis`.
 
 Open links — solid `---` / `----` and dotted `-.-` / `-..-` — are **not**
@@ -146,6 +146,7 @@ Importer diagnostic codes (all prefixed `import/`):
 
 - `import/flowchart-missing-declaration` — first line is not a typed declaration.
 - `import/declaration-remainder` — statements trailing the `flowchart <direction>` declaration on the same line.
+- `import/unsupported-statement-separator` — a Mermaid `;` statement separator inside or at the end of a statement; the importer processes one statement per line.
 - `import/flowchart-empty-source` — no declaration found at all.
 - `import/flowchart-no-components` — no nodes declared.
 - `import/flowchart-invalid-node-id` — expected a node identifier.
