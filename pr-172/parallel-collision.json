@@ -1,0 +1,8 @@
+{"schema_version":1,"diagram_type":"architecture","meta":{"title":"Parallel doubly spread collision","output":"x.html"},"components":[
+{"id":"source","type":"backend","label":"Source","pos":[300,320],"size":[160,60]},
+{"id":"target","type":"database","label":"Target","pos":[300,100],"size":[160,60]},
+{"id":"blocker-left","type":"external","label":"L","pos":[343,220],"size":[30,60]},
+{"id":"blocker-right","type":"external","label":"R","pos":[385,220],"size":[30,60]}],
+"connections":[
+{"id":"edge-a","from":"source","to":"target","fromSide":"top","toSide":"bottom"},
+{"id":"edge-b","from":"source","to":"target","fromSide":"top","toSide":"bottom"}]}
