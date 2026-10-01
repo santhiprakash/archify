@@ -343,6 +343,30 @@ export function createRouter(components, connections = [], {
     return true;
   }
 
+  // The spread map holds planned slots; once a route resolves, its real
+  // endpoints are the final allocation for the group. A straightened axis that
+  // lands on a finalized port stacks two relationships onto one slot even
+  // though the planned map still shows it free, so the resolved routes are the
+  // authority here. The spacing floor matches automaticEndpoint: a port within
+  // the marker spacing of a taken one is not visually distinct.
+  function finalPortIsDistinct(rect, side, point, exceptConn) {
+    const axis = side === 'left' || side === 'right' ? 1 : 0;
+    for (const [relation, routed] of pathCache) {
+      if (relation === exceptConn) continue;
+      const sides = selectedSides.get(relation);
+      if (!sides) continue;
+      const allocated = [];
+      if (relation.from === rect.id && sides.fromSide === side) allocated.push(routed.points[0]);
+      if (relation.to === rect.id && sides.toSide === side) allocated.push(routed.points.at(-1));
+      for (const taken of allocated) {
+        if (Math.abs(taken[axis] - point[axis]) < portSpacing(relation, exceptConn) - 0.0001) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
   // When both endpoints already occupy shared spread slots, prefer a zero-bend
   // shared axis for a near-aligned relationship, but only when the chosen slots
   // keep the competing ports distinct and the direct axis stays unobstructed.
@@ -377,6 +401,8 @@ export function createRouter(components, connections = [], {
           && portHasCornerClearance(to, toSide, candidate.end)
           && spreadPortIsDistinct(from, fromSide, candidate.start, conn)
           && spreadPortIsDistinct(to, toSide, candidate.end, conn)
+          && finalPortIsDistinct(from, fromSide, candidate.start, conn)
+          && finalPortIsDistinct(to, toSide, candidate.end, conn)
           && routeHonorsEndpointSides(points, fromSide, toSide)
           && routeClearsEndpointComponents(points, from, to)
           && routeClearsComponents(conn, points)) {
@@ -438,6 +464,9 @@ export function createRouter(components, connections = [], {
     // Keep the shared endpoint's distinct spread slot and move only the
     // relationship's unshared endpoint onto that axis. With no spread endpoint,
     // retain the existing least-movement choice between the two facing sides.
+    // The moved endpoint must also keep clear of finalized ports: the planned
+    // map has no slot for an unshared side, so only final allocations show a
+    // port that already resolved there.
     const alignEndToStart = horizontallyFacing
       ? { start, end: [end[0], start[1]] }
       : { start, end: [start[0], end[1]] };
@@ -453,6 +482,8 @@ export function createRouter(components, connections = [], {
       const points = [candidate.start, candidate.end];
       if (portHasCornerClearance(from, fromSide, candidate.start)
           && portHasCornerClearance(to, toSide, candidate.end)
+          && finalPortIsDistinct(from, fromSide, candidate.start, conn)
+          && finalPortIsDistinct(to, toSide, candidate.end, conn)
           && routeHonorsEndpointSides(points, fromSide, toSide)
           && routeClearsEndpointComponents(points, from, to)
           && routeClearsComponents(conn, points)) {

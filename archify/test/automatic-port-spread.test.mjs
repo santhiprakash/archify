@@ -404,6 +404,45 @@ test('architecture: a doubly spread near-aligned relationship keeps the bridge w
   }
 });
 
+test('architecture: parallel doubly spread relationships keep distinct ports when the shared axis is taken', () => {
+  const doc = {
+    schema_version: 1,
+    diagram_type: 'architecture',
+    meta: { title: 'Parallel doubly spread collision' },
+    components: [
+      { id: 'source', type: 'backend', label: 'Source', pos: [300, 320], size: [160, 60] },
+      { id: 'target', type: 'database', label: 'Target', pos: [300, 100], size: [160, 60] },
+      // Flanking components cover both planned spread slots (373 and 387) but
+      // leave the shared center axis free, so each edge's straighten pass is
+      // drawn to the same port the sibling already resolved onto.
+      { id: 'blocker-left', type: 'external', label: 'L', pos: [343, 220], size: [30, 60] },
+      { id: 'blocker-right', type: 'external', label: 'R', pos: [385, 220], size: [30, 60] },
+    ],
+    connections: [
+      { id: 'edge-a', from: 'source', to: 'target', fromSide: 'top', toSide: 'bottom' },
+      { id: 'edge-b', from: 'source', to: 'target', fromSide: 'top', toSide: 'bottom' },
+    ],
+  };
+  const forward = render('architecture', doc);
+  const reversed = render('architecture', { ...doc, connections: [...doc.connections].reverse() });
+
+  // Both edges once collapsed onto the shared axis. Exactly one may keep it;
+  // the sibling falls back to its own slot so final allocations stay distinct.
+  const straight = [[380, 320], [380, 160]];
+  for (const [order, html, straightId, bridgedId] of [
+    ['forward', forward, 'edge-a', 'edge-b'],
+    ['reversed', reversed, 'edge-b', 'edge-a'],
+  ]) {
+    const kept = connectionPoints(html, straightId);
+    const fellBack = connectionPoints(html, bridgedId);
+    assert.deepEqual(kept, straight, `${order}: expected ${straightId} on the shared axis`);
+    assert.notDeepEqual(fellBack, straight, `${order}: ${bridgedId} must not stack on the shared axis`);
+    assert.ok(fellBack.length > 2, `${order}: ${bridgedId} falls back to a bridge, not a stacked straight route`);
+    assert.notDeepEqual(fellBack[0], kept[0], `${order}: source-side ports stay distinct`);
+    assert.notDeepEqual(fellBack.at(-1), kept.at(-1), `${order}: target-side ports stay distinct`);
+  }
+});
+
 test('architecture: single and explicitly positioned relationships keep legacy anchors', () => {
   const doc = fanOutArchitecture([
     { id: 'single', from: 'hub', to: 'middle' },
