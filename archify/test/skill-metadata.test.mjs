@@ -64,12 +64,14 @@ test('update awareness is notification-only and never replaces the requested wor
 test('language behavior stays within the bounded locale contract', () => {
   assert.match(defaults, /one primary authored language/);
   assert.match(defaults, /user's choice or the request\/conversation/);
-  assert.match(defaults, /English \(`en`\) or Simplified Chinese \(`zh-CN`\)/);
+  assert.match(defaults, /`en`, `zh-CN`, `es`, and `ko` select a bundled Viewer catalog/);
   assert.match(defaults, /meta\.translations/);
   assert.match(defaults, /exact product, code, protocol, command, API, and environment names/);
   assert.match(defaults, /Language consistency\]\(authoring-contract\.md#language-consistency\)/);
   assert.match(authoringContract, /`meta\.locale` controls only renderer-owned reader surfaces/);
-  assert.match(authoringContract, /every other `meta\.locale`, also set `meta\.translations`/);
+  assert.match(authoringContract, /valid\s+`meta\.translations` value → the selected bundled catalog → English/);
+  assert.match(authoringContract, /supply only the keys whose wording the diagram needs to change/);
+  assert.match(authoringContract, /For a language without a bundled catalog, supply the catalog here/);
   assert.match(authoringContract, /Reuse suitable translations/);
   assert.match(authoringContract, /artifact is\s+not fully localized/);
   assert.match(authoringContract, /Do not silently substitute\s+`zh-CN` for another language or Chinese locale/);

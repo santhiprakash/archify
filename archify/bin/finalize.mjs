@@ -793,6 +793,9 @@ export async function runFinalize({
       };
 
       if (stage === 'deliver' && status === 'pass') {
+        // Non-blocking warnings (for example locale fallbacks) stay visible in
+        // a passing receipt; a later failing gate replaces them.
+        receipt.diagnostics = (stageReceipt.diagnostics || []).filter((entry) => entry?.severity === 'warning');
         receipt.stages.validate = {
           status: 'pass',
           exitCode: 0,
